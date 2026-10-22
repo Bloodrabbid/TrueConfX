@@ -65,9 +65,10 @@ cask "trueconfx" do
   app "TrueConfX.app"
 
   # Приложение не подписано сертификатом Apple: снимаем карантин, иначе macOS не даст его открыть.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/TrueConfX.app"]
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:           ["-dr", "com.apple.quarantine", "{{appdir}}/TrueConfX.app"],
+        writable_paths: ["{{appdir}}/TrueConfX.app"]
   end
 
   zap trash: [
