@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Mic, MicOff, Video, VideoOff, MonitorUp, MonitorX, Hand, PhoneOff, Users, MessageSquare, Maximize, PictureInPicture2, Link2, Copy, Circle, Smile, Plus } from 'lucide-react'
-import { useStore, parseConfLink, addSent } from '../store'
+import { Mic, MicOff, Video, VideoOff, MonitorUp, MonitorX, Hand, PhoneOff, Users, MessageSquare, Maximize, PictureInPicture2, Link2, Copy, Circle, Smile, Plus, Volume2, VolumeX } from 'lucide-react'
+import { useStore, parseConfLink, addSent, callChatOf, peerOf } from '../store'
+import { toHtml } from './Mentions'
 import { Conference, REACTION, ROLE, micOn, camOn, type Layout, type Participant } from '../tc/conference'
+import type { NetStats } from '../tc/media'
 import { messageText } from '../tc/client'
 import { Avatar } from './common'
 import { RichText } from './RichText'
@@ -56,6 +58,54 @@ function Lobby() {
         </div>
       </div>
     </div>
+  )
+}
+
+// Уровень звука дорожки 0..1 — через AnalyserNode, обновление 10 раз в секунду.
+function useLevel(track?: MediaStreamTrack) {
+  const [level, setLevel] = useState(0)
+  useEffect(() => {
+    if (!track || track.readyState !== 'live') { setLevel(0); return }
+    const ctx = new AudioContext()
+    const an = ctx.createAnalyser()
+    an.fftSize = 512
+    ctx.createMediaStreamSource(new MediaStream([track])).connect(an)
+    const buf = new Uint8Array(an.fftSize)
+    const t = setInterval(() => {
+      an.getByteTimeDomainData(buf)
+      let peak = 0
+      for (const v of buf) peak = Math.max(peak, Math.abs(v - 128))
+      setLevel(Math.min(1, peak / 64))
+    }, 100)
+    return () => { clearInterval(t); ctx.close() }
+  }, [track])
+  return level
+}
+
+function Meter({ level }: { level: number }) {
+  return <span className="meter-bars">{[0.04, 0.12, 0.25, 0.45, 0.7].map((th, i) => <i key={i} className={level > th ? 'on' : ''} />)}</span>
+}
+
+// «Слышат ли меня» и «слышу ли я»: уровень с микрофона и из конференции плюс факт,
+// что пакеты звука действительно уходят на сервер и приходят с него.
+function AudioStatus({ conf, stats, alone }: { conf: Conference; stats?: NetStats; alone: boolean }) {
+  const mine = useLevel(conf.micMuted ? undefined : conf.mic)
+  const theirs = useLevel(conf.remote.getAudioTracks()[0])
+  const me = !conf.hasMic ? { cls: 'bad', text: 'Нет микрофона' }
+    : conf.micMuted ? { cls: 'off', text: 'Микрофон выключен' }
+    : stats && !stats.audioSent ? { cls: 'bad', text: 'Звук не уходит на сервер' }
+    : { cls: 'ok', text: stats ? 'Вас слышно' : 'Проверяю микрофон…' }
+  // Пока вы одни, сервер звука не шлёт — это не поломка.
+  const them = stats && !stats.audioRecv && !alone ? { cls: 'bad', text: 'Звук не приходит' } : { cls: 'ok', text: 'Звук участников' }
+  return (
+    <>
+      <span className={`audio-pill ${me.cls}`} title={me.cls === 'ok' ? 'Пакеты звука уходят на сервер. Полоски — громкость вашего микрофона.' : undefined}>
+        {me.cls === 'ok' ? <Mic size={14} /> : <MicOff size={14} />}{me.text}{me.cls === 'ok' && <Meter level={mine} />}
+      </span>
+      <span className={`audio-pill ${them.cls}`} title="Полоски — громкость общего звука конференции">
+        {them.cls === 'ok' ? <Volume2 size={14} /> : <VolumeX size={14} />}{them.text}{them.cls === 'ok' && <Meter level={theirs} />}
+      </span>
+    </>
   )
 }
 
@@ -130,6 +180,7 @@ function CallView({ conf }: { conf: Conference }) {
         <div className="call-top">
           <div><div className="title">{conf.topic || conf.conferenceId}</div><div className="muted small">{state === 'live' ? `${mm}:${ss} · ${parts.length} уч.` : state === 'connecting' ? 'Соединение…' : 'Вход…'}</div></div>
           <div className="row-actions">
+            {state === 'live' && <AudioStatus conf={conf} stats={stats} alone={parts.length < 2} />}
             {stats && (
               <span className={`net ${stats.quality}`} title={[
                 stats.rttMs !== undefined ? `Задержка ${Math.round(stats.rttMs)} мс` : '',
@@ -203,23 +254,27 @@ function People({ conf, parts, reactions }: { conf: Conference; parts: Participa
 }
 
 function ConfChat({ conf }: { conf: Conference }) {
-  const { client, messages, nameOf } = useStore()
+  const { client, messages, nameOf, chats, account } = useStore()
   const [text, setText] = useState('')
-  const list = messages[conf.chatId] ?? []
+  // Созвон начали из чата — пишем туда же, а не в отдельный чат конференции.
+  const chatId = callChatOf(conf.conferenceId, conf.chatId)
+  const chat = chats.find(c => c.chatId === chatId)
+  const list = messages[chatId] ?? []
   useEffect(() => {
-    if (conf.chatId && client && !messages[conf.chatId])
-      client.history(conf.chatId, 50).then(l => useStore.setState({ messages: { ...useStore.getState().messages, [conf.chatId]: l } })).catch(() =>
-        useStore.setState({ messages: { ...useStore.getState().messages, [conf.chatId]: [] } }))
-  }, [conf.chatId, client, messages])
+    if (chatId && client && !messages[chatId])
+      client.history(chatId, 50).then(l => useStore.setState({ messages: { ...useStore.getState().messages, [chatId]: l } })).catch(() =>
+        useStore.setState({ messages: { ...useStore.getState().messages, [chatId]: [] } }))
+  }, [chatId, client, messages])
   const send = async () => {
     const t = text.trim(); if (!t || !client) return
     setText('')
-    const m = await client.sendText({ chatId: conf.chatId, chatType: 2 }, t).catch(() => null)
-    addSent(conf.chatId, t, m)
+    const html = toHtml(t, [])
+    const m = await client.sendText({ chatId, chatType: chat?.chatType ?? 2, peer: chat ? peerOf(chat, account?.trueconfId) : undefined }, html).catch(() => null)
+    addSent(chatId, html, m)
   }
   return (
     <aside className="side-panel">
-      <h3>Чат конференции</h3>
+      <h3>{chat && chatId !== conf.chatId ? chat.title : 'Чат конференции'}</h3>
       <div className="list conf-chat">
         {list.map(m => messageText(m) && <div key={m.messageId} className="conf-msg"><b>{nameOf(m.sender)}</b> <RichText html={messageText(m)} /></div>)}
         {!list.length && <div className="empty">Сообщений пока нет</div>}

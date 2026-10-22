@@ -68,6 +68,11 @@ const pendingNames = new Set<string>()
 // Конференции, которые мы создали для созвона и должны прибрать за собой.
 const adHoc = new Set<string>()
 const saved = JSON.parse(localStorage.getItem('tcx.prefs') ?? '{}')
+// Созвон из чата: сервер заводит конференции отдельный чат. Запоминаем, из какого чата
+// начали созвон, прячем чат конференции и переписку в звонке ведём в исходном чате.
+const confLinks: Record<string, string> = JSON.parse(localStorage.getItem('tcx.confLinks') ?? '{}')
+export const linkedChatOf = (c: ServerChat) => (c.conferenceId ? confLinks[String(c.conferenceId).split('@')[0]] : undefined)
+export const callChatOf = (conferenceId: string, chatId: string) => confLinks[conferenceId.split('@')[0]] ?? chatId
 
 export const useStore = create<State>((set, get) => ({
   // Сервер вводят при первом входе, дальше он хранится в настройках.
@@ -307,6 +312,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const conf = await rest.createMeeting(topic, invitees, account.trueconfId)
       adHoc.add(conf.id)
+      if (opts.chatId) { confLinks[conf.id] = opts.chatId; localStorage.setItem('tcx.confLinks', JSON.stringify(confLinks)) }
       if (opts.postLink && opts.chatId) {
         const chat = get().chats.find(c => c.chatId === opts.chatId)
         if (chat) client.sendText({ chatId: chat.chatId, chatType: chat.chatType, peer: peerOf(chat, account.trueconfId) }, `Созвон «${topic}»: ${conf.url}`).catch(() => {})
@@ -391,7 +397,8 @@ function wireClient(client: TCClient) {
     pushMessage(m)
     s.resolveNames([m.sender])
     const mine = m.sender === s.account?.trueconfId
-    if (mine || isSystem(m)) return
+    const chat = st.getState().chats.find(c => c.chatId === m.chatId)
+    if (mine || isSystem(m) || (chat && linkedChatOf(chat))) return
     if (s.activeChatId === m.chatId && s.tab === 'chats' && document.hasFocus()) client.markRead(m.chatId, m.messageId)
     else {
       st.setState({ unread: { ...st.getState().unread, [m.chatId]: (st.getState().unread[m.chatId] ?? 0) + 1 } })
@@ -432,7 +439,7 @@ function handleLink(link: string) {
 window.native?.onDeepLink?.(handleLink)
 
 // Для отладки из DevTools: __tcx.getState()
-;(window as any).__tcx = useStore
+;(window as any).__tcx = Object.assign(useStore, { TCClient, Conference })
 
 // Вернулись в окно с открытым чатом — он прочитан.
 window.addEventListener('focus', () => {

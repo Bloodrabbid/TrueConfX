@@ -4,7 +4,7 @@
 import type { TCClient } from './client'
 import type { Frame } from './socket'
 import { toRtcConfig } from './turn'
-import { SOURCE, applyVideoLimits, preferHardwareCodecs, tuneOpus, sampleStats, type BitrateConfig, type NetStats } from './media'
+import { SOURCE, applyVideoLimits, preferHardwareCodecs, alignExtmap, fixRejected, sampleStats, type BitrateConfig, type NetStats } from './media'
 
 export const REJECT: Record<number, string> = {
   12: 'Нужен пароль конференции', 13: 'Неверный пароль конференции', 401: 'Конференция не найдена',
@@ -61,7 +61,7 @@ export class Conference {
   private iceRestartTimer?: ReturnType<typeof setTimeout>
   recording = false
 
-  private mic?: MediaStreamTrack
+  mic?: MediaStreamTrack
   private cam?: MediaStreamTrack
   private screen?: MediaStreamTrack
   private videoSender?: RTCRtpSender
@@ -69,6 +69,7 @@ export class Conference {
   private offs: (() => void)[] = []
   private listeners: { [K in keyof Events]?: Set<Events[K]> } = {}
   private makingOffer = false
+  private retries = 0
   private iceRestarted = false
   private pendingCandidates: RTCIceCandidateInit[] = []
 
@@ -151,14 +152,7 @@ export class Conference {
       if (!e.candidate) return
       this.send({ method: 'webrtc', type: 'candidate', candidate: e.candidate.candidate, sdpMLineIndex: e.candidate.sdpMLineIndex, sdpMid: e.candidate.sdpMid, my_peer_id: this.client.account!.instance, conf_id: this.streamId })
     }
-    pc.onnegotiationneeded = async () => {
-      try {
-        this.makingOffer = true
-        const offer = await pc.createOffer()
-        await pc.setLocalDescription({ type: 'offer', sdp: tuneOpus(offer.sdp ?? '') })
-        this.send({ method: 'webrtc', type: 'offer', sdp: pc.localDescription!.sdp, conf_id: this.streamId, browser: navigator.userAgent, my_peer_id: this.client.account!.instance })
-      } finally { this.makingOffer = false }
-    }
+    pc.onnegotiationneeded = () => { this.negotiate().catch(e => console.warn('offer', e)) }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
         clearTimeout(this.iceRestartTimer)
@@ -177,6 +171,21 @@ export class Conference {
     this.offs.push(sampleStats(pc, st => { this.stats = st; this.emit('stats', st) }))
   }
 
+  private async negotiate() {
+    const pc = this.pc
+    if (!pc || pc.signalingState !== 'stable') return
+    try {
+      this.makingOffer = true
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription({ type: 'offer', sdp: alignExtmap(offer.sdp ?? '', pc.remoteDescription?.sdp) })
+      this.send({ method: 'webrtc', type: 'offer', sdp: pc.localDescription!.sdp, conf_id: this.streamId, browser: navigator.userAgent, my_peer_id: this.client.account!.instance })
+    } finally { this.makingOffer = false }
+  }
+
+  // Сервер часто присылает свой offer раньше нашего. Наш откатывается, и микрофон с камерой
+  // остаются вне соединения: тогда нас не слышно. Досогласуем их своим offer.
+  private get unsent() { return !!this.pc?.getTransceivers().some(t => t.sender.track && !t.currentDirection?.startsWith('send')) }
+
   // Совместимо с «вежливой» стороной perfect negotiation: при встречном offer откатываем свой.
   private async onWebrtc(f: Frame) {
     const pc = this.pc
@@ -186,12 +195,13 @@ export class Conference {
     if (f.type === 'answer' || f.type === 'offer') {
       const collision = f.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable')
       if (collision) await pc.setLocalDescription({ type: 'rollback' })
-      await pc.setRemoteDescription({ type: f.type, sdp: f.sdp })
+      await pc.setRemoteDescription({ type: f.type, sdp: f.type === 'answer' ? fixRejected(f.sdp, pc.localDescription?.sdp) : f.sdp })
       for (const c of this.pendingCandidates.splice(0)) await pc.addIceCandidate(c).catch(() => {})
       if (f.type === 'offer') {
         await pc.setLocalDescription()
         this.send({ method: 'webrtc', type: 'answer', sdp: pc.localDescription!.sdp, conf_id: this.streamId, browser: navigator.userAgent, my_peer_id: this.client.account!.instance })
       }
+      if (this.unsent && this.retries++ < 3) setTimeout(() => this.unsent && this.negotiate().catch(e => console.warn("offer", e)), 300)
     } else if (f.type === 'candidate' && f.candidate) {
       const c = { candidate: f.candidate, sdpMid: f.sdpMid, sdpMLineIndex: f.sdpMLineIndex }
       if (pc.remoteDescription) await pc.addIceCandidate(c).catch(() => {})
@@ -206,6 +216,11 @@ export class Conference {
     this.offs.push(
       s.on('webrtc', f => { this.onWebrtc(f).catch(e => console.warn('webrtc', e)) }),
       s.on('sendPartsList', f => this.onParts(f)),
+      // Участник включил или выключил микрофон и камеру — список участников это не присылает.
+      s.on('deviceStatus', f => {
+        const p = this.participants.get(f.UserName)
+        if (p && typeof f.DeviceStatus === 'number') { this.participants.set(f.UserName, { ...p, deviceStatus: f.DeviceStatus }); this.emit('participants', [...this.participants.values()]) }
+      }),
       s.on('conferenceStateChange', f => {
         if (f.conference?.message === 'deleteConference' && this.state !== 'joining') {
           this.setState('ended', f.conference.terminationCause === 15 ? 'Конференцию завершил администратор' : 'Конференция завершена')

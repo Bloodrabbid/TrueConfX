@@ -332,3 +332,11 @@ button.ghost.tiny { padding: 3px; }
 .mention-pop .row { padding: 6px 8px; gap: 10px; }
 .mention-pop .row .title { flex: 1; font-weight: 500; }
 .mention-pop .row.active { background: var(--accent-soft); }
+
+/* Индикаторы звука в звонке */
+.audio-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #8a8a93; margin-right: 10px; white-space: nowrap; }
+.audio-pill.bad { color: var(--danger); }
+.audio-pill.off { color: #6c6c74; }
+.meter-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.meter-bars i { width: 3px; height: 12px; border-radius: 1px; background: #3a3a40; transition: background .08s; }
+.meter-bars i.on { background: var(--ok); }

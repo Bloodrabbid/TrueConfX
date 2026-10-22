@@ -49,31 +49,60 @@ export function preferHardwareCodecs(t: RTCRtpTransceiver) {
   try { t.setCodecPreferences([...caps].sort((a, b) => rank(a) - rank(b))) } catch { /* браузер не дал — оставляем как есть */ }
 }
 
-// Opus: FEC переживает потерю пакетов, DTX не шлёт тишину, моно 48 кГц для голоса.
-export function tuneOpus(sdp: string) {
-  const pt = sdp.match(/a=rtpmap:(\d+) opus\/48000/i)?.[1]
-  if (!pt) return sdp
-  return sdp.replace(new RegExp(`a=fmtp:${pt} (.*)`), (_m, params: string) => {
-    const kv = new Map(params.split(';').map(x => x.trim().split('=') as [string, string]))
-    kv.set('useinbandfec', '1'); kv.set('usedtx', '1'); kv.set('stereo', '0')
-    return `a=fmtp:${pt} ${[...kv].map(([k, v]) => `${k}=${v}`).join(';')}`
-  })
+// Повторный offer после offer сервера: Chrome даёт новым m-секциям свои номера RTP-расширений,
+// и они сталкиваются с номерами сервера внутри BUNDLE — setLocalDescription падает.
+// Берём номера сервера, а незнакомым расширениям раздаём свободные.
+export function alignExtmap(sdp: string, remote?: string) {
+  if (!remote) return sdp
+  const byUri = new Map<string, number>(), used = new Set<number>()
+  for (const m of remote.matchAll(/^a=extmap:(\d+)(?:\/\w+)? (\S+)/gm)) { byUri.set(m[2], +m[1]); used.add(+m[1]) }
+  let next = 1
+  const idFor = (uri: string) => {
+    if (!byUri.has(uri)) {
+      while (used.has(next)) next++
+      if (next > 14) return 0
+      byUri.set(uri, next); used.add(next)
+    }
+    return byUri.get(uri)!
+  }
+  return sdp.split('\r\n').flatMap(l => {
+    const m = /^a=extmap:\d+((?:\/\w+)?) (\S+)(.*)$/.exec(l)
+    if (!m) return [l]
+    const id = idFor(m[2])
+    return id ? [`a=extmap:${id}${m[1]} ${m[2]}${m[3]}`] : []
+  }).join('\r\n')
+}
+
+// Отклонённые секции в ответе сервера приходят как «m=audio 0 UDP/TLS/RTP/SAVPF» без кодеков
+// и без a=mid. Chrome такой SDP не разбирает. Дописываем кодек-заглушку и mid из нашего offer.
+export function fixRejected(sdp: string, offer?: string) {
+  const mids = [...(offer ?? '').matchAll(/^a=mid:(\S+)/gm)].map(m => m[1])
+  const parts = sdp.split(/\r\n(?=m=)/)
+  return parts.map((sec, i) => {
+    const m = /^m=(\w+) 0 ([\w/]+)\s*$/m.exec(sec.split('\r\n')[0])
+    if (!m) return sec
+    const lines = sec.replace(/\r\n$/, '').split('\r\n')
+    lines[0] = `m=${m[1]} 0 ${m[2]} ${m[1] === 'audio' ? 0 : 96}`
+    if (!lines.some(l => l.startsWith('a=mid:')) && mids[i - 1]) lines.push(`a=mid:${mids[i - 1]}`)
+    if (m[1] !== 'audio' && !lines.some(l => l.startsWith('a=rtpmap:96'))) lines.push('a=rtpmap:96 VP8/90000')
+    return lines.join('\r\n') + (i === parts.length - 1 && sec.endsWith('\r\n') ? '\r\n' : '')
+  }).join('\r\n')
 }
 
 export type Quality = 'good' | 'fair' | 'poor'
-export interface NetStats { rttMs?: number; lossPct: number; outKbps: number; inKbps: number; fpsIn?: number; fpsOut?: number; quality: Quality; codec?: string }
+export interface NetStats { rttMs?: number; lossPct: number; outKbps: number; inKbps: number; fpsIn?: number; fpsOut?: number; quality: Quality; codec?: string; audioSent: boolean; audioRecv: boolean }
 
 // Раз в 2 секунды — RTT, потери, скорость в обе стороны и итоговая оценка.
 export function sampleStats(pc: RTCPeerConnection, onStats: (s: NetStats) => void) {
-  let prev: { t: number; out: number; inb: number; lost: number; recv: number } | undefined
+  let prev: { t: number; out: number; inb: number; lost: number; recv: number; aOut: number; aIn: number } | undefined
   const timer = setInterval(async () => {
     if (pc.connectionState === 'closed') { clearInterval(timer); return }
     const r = await pc.getStats().catch(() => undefined)
     if (!r) return
-    let out = 0, inb = 0, lost = 0, recv = 0, rtt: number | undefined, fpsIn: number | undefined, fpsOut: number | undefined, codecId: string | undefined
+    let out = 0, inb = 0, lost = 0, recv = 0, rtt: number | undefined, fpsIn: number | undefined, fpsOut: number | undefined, codecId: string | undefined, aOut = 0, aIn = 0
     r.forEach((s: any) => {
-      if (s.type === 'outbound-rtp') { out += s.bytesSent ?? 0; if (s.kind === 'video') { fpsOut = s.framesPerSecond; codecId = s.codecId } }
-      if (s.type === 'inbound-rtp') { inb += s.bytesReceived ?? 0; lost += s.packetsLost ?? 0; recv += s.packetsReceived ?? 0; if (s.kind === 'video') fpsIn = s.framesPerSecond }
+      if (s.type === 'outbound-rtp') { out += s.bytesSent ?? 0; if (s.kind === 'audio') aOut += s.packetsSent ?? 0; if (s.kind === 'video') { fpsOut = s.framesPerSecond; codecId = s.codecId } }
+      if (s.type === 'inbound-rtp') { inb += s.bytesReceived ?? 0; if (s.kind === 'audio') aIn += s.packetsReceived ?? 0; lost += s.packetsLost ?? 0; recv += s.packetsReceived ?? 0; if (s.kind === 'video') fpsIn = s.framesPerSecond }
       if (s.type === 'candidate-pair' && s.nominated && s.currentRoundTripTime !== undefined) rtt = s.currentRoundTripTime * 1000
     })
     const codec = codecId ? (r.get(codecId) as any)?.mimeType?.split('/')[1] : undefined
@@ -83,9 +112,9 @@ export function sampleStats(pc: RTCPeerConnection, onStats: (s: NetStats) => voi
       const dLost = lost - prev.lost, dRecv = recv - prev.recv
       const lossPct = dLost + dRecv > 0 ? (100 * dLost) / (dLost + dRecv) : 0
       const quality: Quality = lossPct > 8 || (rtt ?? 0) > 400 ? 'poor' : lossPct > 2 || (rtt ?? 0) > 200 ? 'fair' : 'good'
-      onStats({ rttMs: rtt, lossPct, outKbps: ((out - prev.out) * 8) / 1000 / dt, inKbps: ((inb - prev.inb) * 8) / 1000 / dt, fpsIn, fpsOut, quality, codec })
+      onStats({ rttMs: rtt, lossPct, outKbps: ((out - prev.out) * 8) / 1000 / dt, inKbps: ((inb - prev.inb) * 8) / 1000 / dt, fpsIn, fpsOut, quality, codec, audioSent: aOut > prev.aOut, audioRecv: aIn > prev.aIn })
     }
-    prev = { t, out, inb, lost, recv }
+    prev = { t, out, inb, lost, recv, aOut, aIn }
   }, 2000)
   return () => clearInterval(timer)
 }

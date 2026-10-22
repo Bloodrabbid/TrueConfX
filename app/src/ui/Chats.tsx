@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus } from 'lucide-react'
-import { useStore, peerOf } from '../store'
+import { useStore, peerOf, linkedChatOf } from '../store'
 import { CHAT_TYPE, messageText, systemText, isSystem, MSG, type ServerChat, type ServerMessage } from '../tc/client'
 import { Avatar, formatTime, dayLabel, PRESENCE_LABEL } from './common'
 import { RichText, plainText, toPlain } from './RichText'
@@ -33,7 +33,7 @@ export function ChatList() {
   const [q, setQ] = useState('')
   const list = useMemo(() => {
     const s = q.toLowerCase()
-    return chats.filter(c => !s || chatTitle(c, nameOf, account?.trueconfId).toLowerCase().includes(s))
+    return chats.filter(c => !linkedChatOf(c)).filter(c => !s || chatTitle(c, nameOf, account?.trueconfId).toLowerCase().includes(s))
   }, [chats, q, nameOf, account])
 
   return (
@@ -191,7 +191,7 @@ function ForwardDialog() {
   const { forwarding, chats, set, forwardTo, nameOf, account } = useStore()
   const [q, setQ] = useState('')
   if (!forwarding) return null
-  const list = chats.filter(c => chatTitle(c, nameOf, account?.trueconfId).toLowerCase().includes(q.toLowerCase())).slice(0, 50)
+  const list = chats.filter(c => !linkedChatOf(c) && chatTitle(c, nameOf, account?.trueconfId).toLowerCase().includes(q.toLowerCase())).slice(0, 50)
   return (
     <div className="modal-bg" onClick={() => set({ forwarding: undefined })}>
       <div className="modal narrow" onClick={e => e.stopPropagation()}>
