@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown } from 'lucide-react'
+import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus } from 'lucide-react'
 import { useStore, peerOf } from '../store'
 import { CHAT_TYPE, messageText, systemText, isSystem, MSG, type ServerChat, type ServerMessage } from '../tc/client'
 import { Avatar, formatTime, dayLabel, PRESENCE_LABEL } from './common'
@@ -32,7 +32,7 @@ export function ChatList() {
 
   return (
     <div className="list-pane">
-      <div className="pane-head"><h2>Чаты</h2></div>
+      <div className="pane-head"><h2>Чаты</h2><div className="grow" /><button className="ghost" title="Новый групповой чат" onClick={() => useStore.getState().set({ dialog: { kind: 'newChat' } })}><Plus size={18} /></button></div>
       <div className="search"><Search size={15} /><input placeholder="Поиск" value={q} onChange={e => setQ(e.target.value)} /></div>
       <div className="list">
         {list.map(c => {
@@ -209,7 +209,7 @@ function ForwardDialog() {
 }
 
 export function ChatView() {
-  const { chats, activeChatId, messages, account, nameOf, send, loadOlder, join, presence, replyTo, editing, set, draft } = useStore()
+  const { chats, activeChatId, messages, account, nameOf, send, loadOlder, presence, replyTo, editing, set, draft } = useStore()
   const chat = chats.find(c => c.chatId === activeChatId)
   const list = activeChatId ? messages[activeChatId] ?? [] : []
   const text = activeChatId ? draft[activeChatId] ?? '' : ''
@@ -253,6 +253,16 @@ export function ChatView() {
   const peer = peerOf(chat, me)
   const title = chatTitle(chat, nameOf, me)
 
+  const openCall = async (c: ServerChat) => {
+    const st = useStore.getState()
+    if (c.chatType === CHAT_TYPE.GROUP) {
+      const members = await st.client!.participants(c.chatId).catch(() => [])
+      st.resolveNames(members)
+      st.set({ dialog: { kind: 'call', topic: title, invitees: members.filter(id => id !== me), chatId: c.chatId } })
+    } else if (peer) {
+      st.set({ dialog: { kind: 'call', topic: `${nameOf(me ?? '').split(' ')[0]} и ${nameOf(peer).split(' ')[0]}`, invitees: [peer], chatId: c.chatId } })
+    }
+  }
   const submit = () => { const t = text.trim(); if (t) { send(t); setText('') } }
   const cancel = () => { if (editing) setText(''); set({ replyTo: undefined, editing: undefined }) }
 
@@ -277,7 +287,7 @@ export function ChatView() {
           <div className="title">{title}</div>
           <div className="muted small">{peer ? PRESENCE_LABEL[presence[peer] ?? 'offline'] : 'Групповой чат'}</div>
         </div>
-        {chat.chatType === CHAT_TYPE.GROUP && <button className="ghost" title="Начать конференцию в чате" onClick={() => join(chat.chatId)}><Video size={18} /></button>}
+        <button className="ghost" title={chat.chatType === CHAT_TYPE.GROUP ? 'Созвон с участниками чата' : 'Позвонить'} onClick={() => openCall(chat)}><Video size={18} /></button>
       </div>
       <div className="messages" ref={scroller} onScroll={e => {
         const el = e.currentTarget

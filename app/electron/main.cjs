@@ -5,6 +5,12 @@ const path = require('path')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
 // Отладка через Chrome DevTools Protocol: TCX_DEBUG=9229 npx electron .
+// Звонок не должен замирать, когда окно перекрыто или свёрнуто.
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+// Linux: аппаратное кодирование и декодирование видео через VA-API.
+if (process.platform === 'linux') app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoDecodeLinuxGL')
 if (process.env.TCX_DEBUG) app.commandLine.appendSwitch('remote-debugging-port', process.env.TCX_DEBUG)
 let win
 
@@ -39,7 +45,8 @@ function createWindow() {
     width: 1280, height: 820, minWidth: 900, minHeight: 600,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#0f1115',
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true },
+    // backgroundThrottling: false — свёрнутое окно не тормозит звонок (таймеры, видео, статистика).
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, backgroundThrottling: false },
   })
   if (DEV_URL) win.loadURL(DEV_URL)
   else win.loadFile(path.join(__dirname, '../dist/index.html'))

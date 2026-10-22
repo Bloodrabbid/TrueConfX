@@ -1,7 +1,8 @@
 // Текст сообщений TrueConf приходит как урезанный HTML: <a>, <br>, <b>, сущности &amp;.
 // Разбираем его DOMParser'ом и собираем React-узлы только из разрешённых тегов,
 // поэтому чужая разметка не исполняется.
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
+import { CodeBlock, findCode } from './CodeBlock'
 import { useStore } from '../store'
 
 const INLINE: Record<string, string> = { b: 'strong', strong: 'strong', i: 'em', em: 'em', u: 'u', s: 's', strike: 's', code: 'code', pre: 'pre' }
@@ -38,10 +39,24 @@ function walk(node: Node, key: string): ReactNode {
   return <span key={key}>{kids}</span>
 }
 
-export function RichText({ html }: { html: string }) {
+function Html({ html }: { html: string }) {
   if (!/[<&]/.test(html)) return <>{linkify(html, 't')}</>
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
   return <>{Array.from(doc.body.childNodes).map((n, i) => walk(n, String(i)))}</>
+}
+
+// Текст с переносами строк, но без разметки — чтобы искать в нём JSON и код.
+function toPlain(html: string) {
+  if (!/[<&]/.test(html)) return html
+  const doc = new DOMParser().parseFromString(`<body>${html.replace(/<br\s*\/?>/gi, '\n')}</body>`, 'text/html')
+  return doc.body.textContent ?? ''
+}
+
+export function RichText({ html }: { html: string }) {
+  const segments = useMemo(() => findCode(toPlain(html)), [html])
+  // Кода нет — показываем как есть, с упоминаниями и ссылками.
+  if (!segments) return <Html html={html} />
+  return <>{segments.map((s, i) => (s.kind === 'code' ? <CodeBlock key={i} code={s.code} lang={s.lang} /> : <span key={i}>{linkify(s.text.replace(/^\n+|\n+$/g, ''), `s${i}`)}</span>))}</>
 }
 
 // Тот же текст без разметки — для превью в списке чатов и уведомлений.

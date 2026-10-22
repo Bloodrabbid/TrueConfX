@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, MessageSquare, UserPlus } from 'lucide-react'
+import { Search, MessageSquare, UserPlus, Video } from 'lucide-react'
 import { useStore } from '../store'
 import { presenceOf, type Contact } from '../tc/client'
 import { Avatar, PRESENCE_LABEL } from './common'
@@ -41,6 +41,7 @@ export function Contacts() {
       </div>
       <div className="row-actions">
         {add && <button className="ghost" title="Добавить в контакты" onClick={e => { e.stopPropagation(); client?.addContact(c.callId, c.displayName) }}><UserPlus size={17} /></button>}
+        <button className="ghost" title="Позвонить" onClick={e => { e.stopPropagation(); set({ dialog: { kind: 'call', topic: `Созвон с ${c.displayName.split(' ').slice(0, 2).join(' ')}`, invitees: [c.callId] } }) }}><Video size={17} /></button>
         <button className="ghost" title="Написать" onClick={e => { e.stopPropagation(); openP2P(c.callId); set({ tab: 'chats' }) }}><MessageSquare size={17} /></button>
       </div>
     </div>

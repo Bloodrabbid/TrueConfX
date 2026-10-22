@@ -1,7 +1,7 @@
 {
   "name": "trueconfx",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"vite --port 5199 --strictPort\" \"wait-on tcp:5199 && cross-env VITE_DEV_SERVER_URL=http://localhost:5199 electron .\"",
@@ -13,7 +13,6 @@
     "start": "npm run build && electron .",
     "dist": "npm run build && electron-builder --publish never"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
@@ -23,6 +22,7 @@
     "cross-env": "^10.1.0",
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
+    "highlight.js": "^11.12.0",
     "lucide-react": "^1.61.0",
     "oxlint": "^1.88.0",
     "react": "^19.3.1",

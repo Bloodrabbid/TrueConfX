@@ -167,9 +167,14 @@ export class TCClient {
   }
   p2pChat(callId: string) { return this.chat(CHAT.CREATE_P2P, { callId }) }
   createGroup(title: string) { return this.chat(CHAT.CREATE_GROUP, { title, isChannel: false }) }
-  addParticipant(chatId: string, userId: string) { return this.chat(CHAT.ADD_PART, { chatId, userId }) }
+  addParticipant(chatId: string, callId: string) { return this.chat(CHAT.ADD_PART, { chatId, callId }) }
+  removeChat(chatId: string) { return this.chat(CHAT.REMOVE_CHAT, { chatId }) }
   chatInfo(chatId: string) { return this.chat(CHAT.INFO, { chatId }) }
-  participants(chatId: string) { return this.chat(CHAT.PARTICIPANTS, { chatId }) }
+  // Участники чата: [{ name: 'user@host', type, role }]
+  async participants(chatId: string): Promise<string[]> {
+    const p = await this.chat(CHAT.PARTICIPANTS, { chatId, pageNum: 1, count: 1000 })
+    return (p.list ?? []).map((x: any) => x.name ?? x.callId).filter(Boolean)
+  }
 
   sendText(chat: { chatId: string; chatType: number; peer?: string }, text: string, replyMessageId?: string): Promise<Partial<ServerMessage>> {
     const base = { chatId: chat.chatId, type: MSG.TEXT, replyMessageId, content: { text } }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Mic, MicOff, Video, VideoOff, MonitorUp, MonitorX, Hand, PhoneOff, Users, MessageSquare, Maximize, PictureInPicture2, Link2, Copy, Circle, Smile } from 'lucide-react'
+import { Mic, MicOff, Video, VideoOff, MonitorUp, MonitorX, Hand, PhoneOff, Users, MessageSquare, Maximize, PictureInPicture2, Link2, Copy, Circle, Smile, Plus } from 'lucide-react'
 import { useStore, parseConfLink, addSent } from '../store'
 import { Conference, REACTION, ROLE, micOn, camOn, type Layout, type Participant } from '../tc/conference'
 import { messageText } from '../tc/client'
@@ -36,6 +36,11 @@ function Lobby() {
       <div className="pane-head"><h2>Конференции</h2></div>
       <div className="lobby-grid">
         <div className="card">
+          <h3>Новый созвон</h3>
+          <p className="muted small">Создаст конференцию и позвонит тем, кого вы выберете.</p>
+          <button className="primary" onClick={() => set({ dialog: { kind: 'call', topic: 'Встреча', invitees: [] } })}><Plus size={16} /> Создать и позвать</button>
+        </div>
+        <div className="card">
           <h3>Войти в конференцию</h3>
           <p className="muted small">ID, ссылка вида https://{server}/c/… или trueconf:\c\…</p>
           <input placeholder="ID или ссылка" value={link} onChange={e => setLink(e.target.value)} onKeyDown={e => e.key === 'Enter' && id && join(id, password)} />
@@ -54,6 +59,7 @@ function Lobby() {
   )
 }
 
+const NET_LABEL = { good: 'Связь хорошая', fair: 'Связь средняя', poor: 'Связь плохая' }
 const EMOJI: [number, string, string][] = [[REACTION.YES, '👍', 'Да'], [REACTION.NO, '👎', 'Нет'], [REACTION.LAUGH, '😂', 'Смешно'], [REACTION.APPLAUD, '👏', 'Аплодисменты'], [REACTION.AWAY, '☕', 'Отошёл']]
 const REACTION_ICON: Record<number, string> = { [REACTION.HAND]: '✋', [REACTION.YES]: '👍', [REACTION.NO]: '👎', [REACTION.LAUGH]: '😂', [REACTION.APPLAUD]: '👏', [REACTION.AWAY]: '☕' }
 
@@ -67,6 +73,7 @@ function CallView({ conf }: { conf: Conference }) {
   const layout = useConf<Layout | undefined>(conf, 'layout', () => conf.layout)
   const reactions = useConf(conf, 'reactions', () => new Map(conf.reactions))
   const recording = useConf(conf, 'recording', () => conf.recording)
+  const stats = useConf(conf, 'stats', () => conf.stats)
   const [, force] = useState(0)
   const [panel, setPanel] = useState<'people' | 'chat' | null>(null)
   const [emoji, setEmoji] = useState(false)
@@ -123,6 +130,17 @@ function CallView({ conf }: { conf: Conference }) {
         <div className="call-top">
           <div><div className="title">{conf.topic || conf.conferenceId}</div><div className="muted small">{state === 'live' ? `${mm}:${ss} · ${parts.length} уч.` : state === 'connecting' ? 'Соединение…' : 'Вход…'}</div></div>
           <div className="row-actions">
+            {stats && (
+              <span className={`net ${stats.quality}`} title={[
+                stats.rttMs !== undefined ? `Задержка ${Math.round(stats.rttMs)} мс` : '',
+                `Потери ${stats.lossPct.toFixed(1)}%`,
+                `Отправка ${Math.round(stats.outKbps)} кбит/с${stats.fpsOut ? `, ${Math.round(stats.fpsOut)} к/с` : ''}`,
+                `Приём ${Math.round(stats.inKbps)} кбит/с${stats.fpsIn ? `, ${Math.round(stats.fpsIn)} к/с` : ''}`,
+                stats.codec ? `Кодек ${stats.codec}` : '',
+              ].filter(Boolean).join('\n')}>
+                <span className="net-bars"><i /><i /><i /></span>{NET_LABEL[stats.quality]}
+              </span>
+            )}
             {recording && <span className="rec"><Circle size={10} fill="currentColor" /> Запись</span>}
             <button className="ghost" title="Скопировать ссылку" onClick={() => { navigator.clipboard.writeText(`https://${useStore.getState().server}/c/${conf.conferenceId}`); notify('Ссылка скопирована') }}><Copy size={17} /></button>
           </div>
@@ -134,8 +152,8 @@ function CallView({ conf }: { conf: Conference }) {
           {conf.localVideo && <video ref={self} className={`self ${conf.sharing ? '' : 'mirror'}`} autoPlay muted playsInline />}
         </div>
         <div className="controls">
-          <button className={`ctl ${conf.micMuted ? 'off' : ''}`} title="Микрофон (⌘D)" onClick={() => { conf.setMicMuted(!conf.micMuted); refresh() }}>{conf.micMuted ? <MicOff /> : <Mic />}</button>
-          <button className={`ctl ${conf.camOff ? 'off' : ''}`} title="Камера (⌘E)" onClick={async () => { await conf.setCamOff(!conf.camOff).catch(e => notify(e.message)); refresh() }}>{conf.camOff ? <VideoOff /> : <Video />}</button>
+          <button className={`ctl ${conf.micMuted || !conf.hasMic ? 'off' : ''}`} title="Микрофон (⌘D)" onClick={() => { conf.setMicMuted(conf.hasMic ? !conf.micMuted : false); setTimeout(refresh, 600); refresh() }}>{conf.micMuted || !conf.hasMic ? <MicOff /> : <Mic />}</button>
+          <button className={`ctl ${conf.camOff || !conf.localVideo ? 'off' : ''}`} title="Камера (⌘E)" onClick={async () => { await conf.setCamOff(!!conf.localVideo).catch(e => notify(e.message)); refresh() }}>{conf.camOff || !conf.localVideo ? <VideoOff /> : <Video />}</button>
           <button className={`ctl ${conf.sharing ? 'active' : ''}`} title="Показать экран" onClick={async () => { await (conf.sharing ? conf.stopScreenShare() : conf.startScreenShare()).catch(() => {}); refresh() }}>{conf.sharing ? <MonitorX /> : <MonitorUp />}</button>
           <button className={`ctl ${hand ? 'active' : ''}`} title="Поднять руку" onClick={() => conf.setReaction(hand ? REACTION.NONE : REACTION.HAND)}><Hand /></button>
           <div className="emoji-wrap">

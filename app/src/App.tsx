@@ -7,6 +7,7 @@ import { Contacts } from './ui/Contacts'
 import { Meet } from './ui/Meet'
 import { Settings } from './ui/Settings'
 import { Avatar } from './ui/common'
+import { Dialogs } from './ui/Dialogs'
 import './App.css'
 
 function ScreenPicker() {
@@ -74,6 +75,7 @@ export default function App() {
         <button className="mini-call" onClick={() => set({ tab: 'meet' })}><span className="live-dot static" /> {conference.topic || 'Конференция'} — вернуться</button>
       )}
       <ScreenPicker />
+      <Dialogs />
       {toast && <div className="toast">{toast}</div>}
     </div>
   )

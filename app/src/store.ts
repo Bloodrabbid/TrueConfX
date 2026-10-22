@@ -2,12 +2,18 @@
 import { create } from 'zustand'
 import { TCClient, CHAT_TYPE, messageText, sortByTime, isSystem, type Account, type Contact, type Presence, type ServerChat, type ServerMessage } from './tc/client'
 import { Conference } from './tc/conference'
+import { TCRest } from './tc/rest'
 import { plainText } from './ui/RichText'
 
 export type Tab = 'chats' | 'contacts' | 'meet' | 'settings'
+export type Dialog =
+  | { kind: 'newChat' }
+  | { kind: 'call'; topic: string; invitees: string[]; chatId?: string }
 
 interface State {
   client?: TCClient
+  rest?: TCRest
+  dialog?: Dialog
   account?: Account
   server: string
   lastLogin: string
@@ -44,6 +50,8 @@ interface State {
   forwardTo: (chatId: string) => Promise<void>
   quoted: (chatId: string, messageId: string) => ServerMessage | null | undefined
   join: (confId: string, password?: string) => Promise<void>
+  startCall: (topic: string, invitees: string[], opts?: { chatId?: string; postLink?: boolean }) => Promise<void>
+  createGroupChat: (title: string, members: string[]) => Promise<void>
   leave: () => void
   nameOf: (id: string) => string
   resolveNames: (ids: string[]) => void
@@ -51,6 +59,8 @@ interface State {
 }
 
 const pendingNames = new Set<string>()
+// Конференции, которые мы создали для созвона и должны прибрать за собой.
+const adHoc = new Set<string>()
 const saved = JSON.parse(localStorage.getItem('tcx.prefs') ?? '{}')
 
 export const useStore = create<State>((set, get) => ({
@@ -113,6 +123,9 @@ export const useStore = create<State>((set, get) => ({
       get().set({ server, lastLogin: login })
       if (remember) await window.native?.saveCredentials?.(server, login, password)
       set({ client, account, connecting: false })
+      // REST нужен для созвонов; без него чаты работают, поэтому ошибку не показываем.
+      const rest = new TCRest(host)
+      rest.login(login, password).then(() => set({ rest }), e => console.warn('OAuth', e))
       wireClient(client)
       client.requestContacts()
       const chats = await client.chatList()
@@ -130,7 +143,7 @@ export const useStore = create<State>((set, get) => ({
     get().conference?.hangup()
     get().client?.logout()
     window.native?.saveCredentials?.('', '', '')
-    set({ client: undefined, account: undefined, chats: [], messages: {}, contacts: [], activeChatId: undefined, conference: undefined })
+    set({ client: undefined, rest: undefined, dialog: undefined, account: undefined, chats: [], messages: {}, contacts: [], activeChatId: undefined, conference: undefined })
   },
 
   openChat: async chatId => {
@@ -230,7 +243,62 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  leave: () => { get().conference?.hangup(); set({ conference: undefined }) },
+  leave: () => {
+    const conf = get().conference
+    conf?.hangup()
+    set({ conference: undefined })
+    // Свою разовую конференцию убираем, если в ней никого не осталось.
+    if (conf && adHoc.has(conf.conferenceId) && [...conf.participants.keys()].every(id => id.split('/')[0] === get().account?.trueconfId)) {
+      adHoc.delete(conf.conferenceId)
+      // Сразу после выхода сервер ещё считает конференцию идущей и не даёт её удалить.
+      const rest = get().rest, id = conf.conferenceId
+      if (rest) setTimeout(async () => {
+        await rest.req('POST', `/api/v4/conferences/${id}/stop`).catch(() => {})
+        await rest.remove(id).catch(() => new Promise(r => setTimeout(r, 3000)).then(() => rest.remove(id)).catch(() => {}))
+      }, 1500)
+      // Сервер заводит конференции групповой чат — пустой тоже убираем.
+      if (conf.chatId) {
+        get().client?.removeChat(conf.chatId).catch(() => {})
+        set({ chats: get().chats.filter(c => c.chatId !== conf.chatId) })
+      }
+    }
+  },
+
+  startCall: async (topic, invitees, opts = {}) => {
+    const { rest, account, client } = get()
+    if (!rest?.ready || !account || !client) { get().notify('Созвон недоступен: сервер не выдал доступ к API'); return }
+    if (get().conference) { get().notify('Сначала выйдите из текущей конференции'); return }
+    set({ dialog: undefined })
+    try {
+      const conf = await rest.createMeeting(topic, invitees, account.trueconfId)
+      adHoc.add(conf.id)
+      if (opts.postLink && opts.chatId) {
+        const chat = get().chats.find(c => c.chatId === opts.chatId)
+        if (chat) client.sendText({ chatId: chat.chatId, chatType: chat.chatType, peer: peerOf(chat, account.trueconfId) }, `Созвон «${topic}»: ${conf.url}`).catch(() => {})
+      }
+      await get().join(conf.id)
+      // Звоним приглашённым, когда сами уже в конференции.
+      const c = get().conference
+      if (c) for (const id of invitees) if (id !== account.trueconfId) c.invite(id)
+    } catch (e: any) {
+      get().notify(`Не удалось начать созвон: ${e.message}`)
+    }
+  },
+
+  createGroupChat: async (title, members) => {
+    const { client } = get()
+    if (!client) return
+    set({ dialog: undefined })
+    try {
+      const created = await client.createGroup(title)
+      for (const id of members) await client.addParticipant(created.chatId, id).catch(e => get().notify(`${get().nameOf(id)}: ${e.message}`))
+      const chat: ServerChat = { chatType: CHAT_TYPE.GROUP, title, ...created }
+      set({ chats: sortChats([chat, ...get().chats.filter(c => c.chatId !== chat.chatId)]), messages: { ...get().messages, [chat.chatId]: [] } })
+      get().openChat(chat.chatId)
+    } catch (e: any) {
+      get().notify(`Не удалось создать чат: ${e.message}`)
+    }
+  },
 }))
 
 // «https://tc.example.com/c/123» → «tc.example.com»; порт сохраняем.

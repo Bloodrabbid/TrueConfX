@@ -4,6 +4,7 @@
 import type { TCClient } from './client'
 import type { Frame } from './socket'
 import { toRtcConfig } from './turn'
+import { SOURCE, applyVideoLimits, preferHardwareCodecs, tuneOpus, sampleStats, type BitrateConfig, type NetStats } from './media'
 
 export const REJECT: Record<number, string> = {
   12: 'Нужен пароль конференции', 13: 'Неверный пароль конференции', 401: 'Конференция не найдена',
@@ -33,6 +34,7 @@ type Events = {
   reactions: (m: Map<string, number>) => void
   remoteMute: (kind: 'mic' | 'cam', on: boolean) => void
   recording: (on: boolean) => void
+  stats: (s: NetStats) => void
 }
 
 // Статус устройства участника: старшие 16 бит — видео, младшие — звук. 0 = работает.
@@ -54,6 +56,9 @@ export class Conference {
   camOff = false
   sharing = false
   layout?: Layout
+  stats?: NetStats
+  private limits = new Map<number, BitrateConfig>()
+  private iceRestartTimer?: ReturnType<typeof setTimeout>
   recording = false
 
   private mic?: MediaStreamTrack
@@ -64,6 +69,7 @@ export class Conference {
   private offs: (() => void)[] = []
   private listeners: { [K in keyof Events]?: Set<Events[K]> } = {}
   private makingOffer = false
+  private iceRestarted = false
   private pendingCandidates: RTCIceCandidateInit[] = []
 
   constructor(private client: TCClient, public conferenceId: string, private password = '') {}
@@ -111,7 +117,8 @@ export class Conference {
     this.mic = local.getAudioTracks()[0]
     this.cam = local.getVideoTracks()[0]
 
-    await restrict
+    const first = await restrict
+    if (first) this.saveLimits(first)
     this.createPeer(config)
     this.send({ method: 'connectMedia', streamConferenceId: this.streamId, type: 1 })
     this.reportDevices()
@@ -128,7 +135,13 @@ export class Conference {
     pc.addTransceiver('video', { direction: 'recvonly' })
     // Отдача: отдельные sendonly-трансиверы.
     if (this.mic) { this.mic.enabled = !this.micMuted; this.audioSender = pc.addTransceiver(this.mic, { direction: 'sendonly' }).sender }
-    if (this.cam) { this.cam.enabled = !this.camOff; this.videoSender = pc.addTransceiver(this.cam, { direction: 'sendonly' }).sender }
+    if (this.cam) {
+      this.cam.enabled = !this.camOff
+      this.cam.contentHint = 'motion'
+      const t = pc.addTransceiver(this.cam, { direction: 'sendonly' })
+      preferHardwareCodecs(t)
+      this.videoSender = t.sender
+    }
 
     pc.ontrack = e => {
       if (!this.remote.getTracks().includes(e.track)) this.remote.addTrack(e.track)
@@ -141,19 +154,33 @@ export class Conference {
     pc.onnegotiationneeded = async () => {
       try {
         this.makingOffer = true
-        await pc.setLocalDescription()
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription({ type: 'offer', sdp: tuneOpus(offer.sdp ?? '') })
         this.send({ method: 'webrtc', type: 'offer', sdp: pc.localDescription!.sdp, conf_id: this.streamId, browser: navigator.userAgent, my_peer_id: this.client.account!.instance })
       } finally { this.makingOffer = false }
     }
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'connected' && this.state !== 'live') this.setState('live')
-      if (pc.connectionState === 'failed') this.setState('ended', 'Медиасоединение не установилось')
+      if (pc.connectionState === 'connected') {
+        clearTimeout(this.iceRestartTimer)
+        if (this.state !== 'live') { this.setState('live'); this.applyLimits() }
+      }
+      // Сеть моргнула (смена Wi-Fi, VPN): через 3 с перезапускаем ICE, а не выходим.
+      if (pc.connectionState === 'disconnected') {
+        clearTimeout(this.iceRestartTimer)
+        this.iceRestartTimer = setTimeout(() => pc.connectionState !== 'connected' && pc.restartIce(), 3000)
+      }
+      if (pc.connectionState === 'failed') {
+        if (this.state === 'live' && !this.iceRestarted) { this.iceRestarted = true; pc.restartIce() }
+        else this.setState('ended', 'Медиасоединение не установилось')
+      }
     }
+    this.offs.push(sampleStats(pc, st => { this.stats = st; this.emit('stats', st) }))
   }
 
   // Совместимо с «вежливой» стороной perfect negotiation: при встречном offer откатываем свой.
   private async onWebrtc(f: Frame) {
     const pc = this.pc
+    if (f.type === 'restrictBitrate') { this.saveLimits(f); this.applyLimits(); return }
     if (f.type === 'layout') { this.layout = { width: f.width, height: f.height, list: f.list ?? [] }; this.emit('layout', this.layout); return }
     if (!pc) return
     if (f.type === 'answer' || f.type === 'offer') {
@@ -229,7 +256,11 @@ export class Conference {
     this.send({ method: 'DeviceStatus', value: this.deviceStatus() })
   }
 
+  get hasMic() { return !!this.mic && this.mic.readyState === 'live' }
+
   setMicMuted(muted: boolean) {
+    // Вошли без микрофона, а теперь включают — сначала захватываем его.
+    if (!muted && !this.hasMic) { this.micMuted = false; this.switchDevice('audio', '').catch(e => console.warn('mic', e)); return }
     this.micMuted = muted
     if (this.mic) this.mic.enabled = !muted
     this.send({ method: 'DeviceState', Type: 'microphone', id: this.mic?.getSettings().deviceId ?? '', Name: this.mic?.label ?? '', Mute: muted })
@@ -248,12 +279,27 @@ export class Conference {
 
   private async setOutgoingVideo(track: MediaStreamTrack | null) {
     if (this.videoSender) await this.videoSender.replaceTrack(track)
-    else if (track && this.pc) this.videoSender = this.pc.addTransceiver(track, { direction: 'sendonly' }).sender
+    else if (track && this.pc) {
+      const t = this.pc.addTransceiver(track, { direction: 'sendonly' })
+      preferHardwareCodecs(t)
+      this.videoSender = t.sender
+    }
+    await this.applyLimits()
+  }
+
+  private saveLimits(f: Frame) {
+    for (const c of (f.bitrateConfigs ?? []) as BitrateConfig[]) this.limits.set(c.sourceType, c)
+  }
+
+  // Шлём ровно столько, сколько разрешил сервер: лишний битрейт забивает канал и даёт фризы у всех.
+  private async applyLimits() {
+    if (!this.videoSender?.track) return
+    await applyVideoLimits(this.videoSender, this.limits.get(this.sharing ? SOURCE.DESKTOP : SOURCE.CAMERA), this.sharing)
   }
 
   async switchDevice(kind: 'audio' | 'video', deviceId: string) {
     if (kind === 'audio') {
-      const t = (await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true } })).getAudioTracks()[0]
+      const t = (await navigator.mediaDevices.getUserMedia({ audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true } })).getAudioTracks()[0]
       t.enabled = !this.micMuted
       this.mic?.stop(); this.mic = t
       if (this.audioSender) await this.audioSender.replaceTrack(t)
@@ -267,12 +313,12 @@ export class Conference {
   }
 
   async startScreenShare() {
-    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15 } }, audio: false })
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 15 }, width: { max: 1920 }, height: { max: 1080 } }, audio: false })
     this.screen = s.getVideoTracks()[0]
     this.screen.contentHint = 'detail'
     this.screen.onended = () => this.stopScreenShare()
     this.sharing = true
-    await this.setOutgoingVideo(this.screen)
+    await this.setOutgoingVideo(this.screen)  // внутри применятся лимиты для экрана
     this.reportDevices()
     this.send({ method: 'VideoSourceType', Type: 2, Conference: this.streamId })
   }
@@ -300,6 +346,7 @@ export class Conference {
   }
 
   private dispose() {
+    clearTimeout(this.iceRestartTimer)
     this.offs.splice(0).forEach(off => off())
     for (const t of [this.mic, this.cam, this.screen]) t?.stop()
     this.pc?.close()
