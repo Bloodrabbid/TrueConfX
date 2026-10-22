@@ -46,7 +46,7 @@ function Html({ html }: { html: string }) {
 }
 
 // Текст с переносами строк, но без разметки — чтобы искать в нём JSON и код.
-function toPlain(html: string) {
+export function toPlain(html: string) {
   if (!/[<&]/.test(html)) return html
   const doc = new DOMParser().parseFromString(`<body>${html.replace(/<br\s*\/?>/gi, '\n')}</body>`, 'text/html')
   return doc.body.textContent ?? ''

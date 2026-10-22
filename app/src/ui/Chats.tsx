@@ -3,8 +3,9 @@ import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Qu
 import { useStore, peerOf } from '../store'
 import { CHAT_TYPE, messageText, systemText, isSystem, MSG, type ServerChat, type ServerMessage } from '../tc/client'
 import { Avatar, formatTime, dayLabel, PRESENCE_LABEL } from './common'
-import { RichText, plainText } from './RichText'
+import { RichText, plainText, toPlain } from './RichText'
 import { Attachment } from './Attachment'
+import { useMentions, toHtml } from './Mentions'
 
 function plural(n: number, one: string, few: string, many: string) {
   const m10 = n % 10, m100 = n % 100
@@ -256,10 +257,11 @@ export function ChatView() {
   }, [activeChatId, lastSys]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!editing) return
-    setText(plainText(messageText(editing)))
+    setText(toPlain(messageText(editing)))
     input.current?.focus()
   }, [editing]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const mention = useMentions(activeChatId, text, setText, input)
   if (!chat) return <div className="chat-view empty-state"><MessageSquare size={48} /><p>Выберите чат слева</p></div>
   const me = account?.trueconfId
   const peer = peerOf(chat, me)
@@ -275,7 +277,12 @@ export function ChatView() {
       st.set({ dialog: { kind: 'call', topic: `${nameOf(me ?? '').split(' ')[0]} и ${nameOf(peer).split(' ')[0]}`, invitees: [peer], chatId: c.chatId } })
     }
   }
-  const submit = () => { const t = text.trim(); if (t) { send(t); setText('') } }
+  const submit = () => {
+    const t = text.trim()
+    if (!t) return
+    send(toHtml(t, mention.used()))
+    setText(''); mention.reset()
+  }
   const cancel = () => { if (editing) setText(''); set({ replyTo: undefined, editing: undefined }) }
 
   // Цитата: ответ на сообщение + сам фрагмент в тексте, чтобы его видели и в официальном клиенте.
@@ -344,8 +351,11 @@ export function ChatView() {
         </div>
       )}
       <div className="composer">
-        <textarea ref={input} rows={1} placeholder="Сообщение" value={text} onChange={e => setText(e.target.value)}
+        {mention.popup}
+        <textarea ref={input} rows={1} placeholder="Сообщение · @ — упомянуть" value={text}
+          onChange={e => { setText(e.target.value); mention.trackCaret() }} onSelect={mention.trackCaret} onClick={mention.trackCaret}
           onKeyDown={e => {
+            if (mention.onKeyDown(e)) return
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
             if (e.key === 'Escape') cancel()
             // Стрелка вверх в пустом поле — изменить своё последнее сообщение.
