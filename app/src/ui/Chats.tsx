@@ -1,11 +1,12 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus, Pin, PinOff, Bell, BellOff, AtSign, Eraser, MoreVertical } from 'lucide-react'
+import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus, Pin, PinOff, Bell, BellOff, AtSign, Eraser, MoreVertical, Paperclip, Info, FolderOpen, ChevronUp } from 'lucide-react'
 import { useStore, peerOf, linkedChatOf, type NotifyLevel } from '../store'
 import { CHAT_TYPE, messageText, systemText, isSystem, MSG, type ServerChat, type ServerMessage } from '../tc/client'
 import { Avatar, formatTime, dayLabel, PRESENCE_LABEL } from './common'
 import { RichText, plainText, toPlain } from './RichText'
 import { Attachment } from './Attachment'
 import { useMentions, toHtml } from './Mentions'
+import { SendFilesDialog } from './SendFiles'
 
 function plural(n: number, one: string, few: string, many: string) {
   const m10 = n % 10, m100 = n % 100
@@ -38,7 +39,9 @@ function chatActions(chat: ServerChat): Action[] {
   const own = s.notifyPrefs.chats[chat.chatId]
   const levels: [NotifyLevel, typeof Bell][] = [['all', Bell], ['mentions', AtSign], ['off', BellOff]]
   const list: Action[] = [
-    { key: 'pin', label: pinned ? 'Открепить' : 'Закрепить', icon: pinned ? PinOff : Pin, run: () => s.togglePin(chat.chatId) },
+    ...(chat.chatType === CHAT_TYPE.GROUP ? [{ key: 'info', label: 'Информация', icon: Info, run: () => { s.openChat(chat.chatId); s.set({ showMembers: true, showFiles: false }) } }] : []),
+    { key: 'files', label: 'Файлы', icon: FolderOpen, run: () => { s.openChat(chat.chatId); s.set({ showFiles: true, showMembers: false }) } },
+    { key: 'pin', label: pinned ? 'Открепить' : 'Закрепить', icon: pinned ? PinOff : Pin, sep: true, run: () => s.togglePin(chat.chatId) },
     ...levels.map(([l, icon], i): Action => ({
       key: `n-${l}`, label: LEVEL_LABEL[l], icon, sep: i === 0, hint: level === l ? (own ? '✓' : '✓ по умолч.') : undefined,
       // Повторный выбор уровня по умолчанию снимает личную настройку чата.
@@ -255,6 +258,32 @@ export function ChatView() {
   const text = activeChatId ? draft[activeChatId] ?? '' : ''
   const setText = (t: string) => activeChatId && set({ draft: { ...useStore.getState().draft, [activeChatId]: t } })
   const [chatMenu, setChatMenu] = useState<MenuState | null>(null)
+  const [pending, setPending] = useState<File[]>([])
+  const [search, setSearch] = useState<string | null>(null)
+  const [hit, setHit] = useState(0)
+  // Поиск по загруженной истории: текст сообщений и имена файлов. На сервере поиска по чату нет.
+  const found = useMemo(() => {
+    const q = search?.trim().toLowerCase()
+    if (!q) return []
+    return list.filter(m => !isSystem(m) && `${plainText(messageText(m))} ${m.content?.file_name ?? ''}`.toLowerCase().includes(q))
+  }, [search, list])
+  useEffect(() => { setSearch(null) }, [activeChatId])
+  // Набрали запрос — сразу показываем самое новое совпадение.
+  useEffect(() => {
+    const m = found.at(-1)
+    if (!m) return
+    const el = document.getElementById(`m-${m.messageId}`)
+    el?.scrollIntoView({ block: 'center' })
+    el?.classList.add('flash'); setTimeout(() => el?.classList.remove('flash'), 1200)
+  }, [search]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 'f') { e.preventDefault(); setSearch(q => q ?? '') } }
+    addEventListener('keydown', h)
+    return () => removeEventListener('keydown', h)
+  }, [])
+  const [dragging, setDragging] = useState(false)
+  const filePicker = useRef<HTMLInputElement>(null)
+  const addFiles = (list: FileList | File[] | null | undefined) => { const a = Array.from(list ?? []); if (a.length) setPending(p => [...p, ...a]) }
   const notifyPrefs = useStore(s => s.notifyPrefs)
   const level: NotifyLevel = chat ? notifyPrefs.chats[chat.chatId] ?? useStore.getState().levelOf(chat) : 'all'
   const scroller = useRef<HTMLDivElement>(null)
@@ -335,19 +364,38 @@ export function ChatView() {
   }
 
   return (
-    <div className="chat-view">
+    <div className={`chat-view ${dragging ? 'dragging' : ''}`}
+      onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true) } }}
+      onDragLeave={e => { if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }}
+      onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files) }}>
       <div className="chat-head">
         <Avatar name={title} id={peer ?? chat.chatId} size={36} />
         <div className="chat-head-main">
           <div className="title">{title}{level !== 'all' && <span className="muted" title={LEVEL_LABEL[level]}>{level === 'off' ? <BellOff size={13} /> : <AtSign size={13} />}</span>}</div>
           {peer ? <div className="muted small">{PRESENCE_LABEL[presence[peer] ?? 'offline']}</div>
-            : <button className="muted small link-like" onClick={() => set({ showMembers: !showMembers })}>{memberCount ? plural(memberCount, 'участник', 'участника', 'участников') : 'Групповой чат'}</button>}
+            : <button className="muted small link-like" onClick={() => set({ showMembers: !showMembers, showFiles: false })}>{memberCount ? plural(memberCount, 'участник', 'участника', 'участников') : 'Групповой чат'}</button>}
         </div>
-        {chat.chatType === CHAT_TYPE.GROUP && <button className={`ghost ${showMembers ? 'on' : ''}`} title="Участники" onClick={() => set({ showMembers: !showMembers })}><Users size={18} /></button>}
+        {chat.chatType === CHAT_TYPE.GROUP && <button className={`ghost ${showMembers ? 'on' : ''}`} title="Участники" onClick={() => set({ showMembers: !showMembers, showFiles: false })}><Users size={18} /></button>}
+        <button className={`ghost ${search !== null ? 'on' : ''}`} title="Поиск по чату (⌘F)" onClick={() => setSearch(search === null ? '' : null)}><Search size={18} /></button>
         <button className="ghost" title={chat.chatType === CHAT_TYPE.GROUP ? 'Созвон с участниками чата' : 'Позвонить'} onClick={() => openCall(chat)}><Video size={18} /></button>
         <button className="ghost" title="Действия с чатом" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setChatMenu({ x: r.right - 220, y: r.bottom + 4, items: chatActions(chat) }) }}><MoreVertical size={18} /></button>
         {chatMenu && <ContextMenu menu={chatMenu} onClose={() => setChatMenu(null)} />}
       </div>
+      {search !== null && (
+        <div className="chat-search">
+          <Search size={15} />
+          <input autoFocus placeholder="Поиск в чате" value={search} onChange={e => { setSearch(e.target.value); setHit(0) }}
+            onKeyDown={e => {
+              if (e.key === 'Escape') setSearch(null)
+              if (e.key === 'Enter' && found.length) { const n = (hit + (e.shiftKey ? found.length - 1 : 1)) % found.length; setHit(n); onJump(found[found.length - 1 - n].messageId) }
+            }} />
+          <span className="muted small">{search.trim() ? (found.length ? `${Math.min(hit + 1, found.length)} из ${found.length}` : 'Не найдено') : ''}</span>
+          <button className="ghost" title="Раньше (Enter)" disabled={!found.length} onClick={() => { const n = (hit + 1) % found.length; setHit(n); onJump(found[found.length - 1 - n].messageId) }}><ChevronUp size={16} /></button>
+          <button className="ghost" title="Позже (Shift+Enter)" disabled={!found.length} onClick={() => { const n = (hit + found.length - 1) % found.length; setHit(n); onJump(found[found.length - 1 - n].messageId) }}><ChevronDown size={16} /></button>
+          <button className="ghost small-btn" title="Загрузить более ранние сообщения и искать в них" onClick={() => loadOlder(chat.chatId)}>Искать раньше</button>
+          <button className="ghost" title="Закрыть (Esc)" onClick={() => setSearch(null)}><X size={16} /></button>
+        </div>
+      )}
       <div className="messages" ref={scroller} onScroll={e => {
         const el = e.currentTarget
         atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
@@ -390,7 +438,11 @@ export function ChatView() {
       )}
       <div className="composer">
         {mention.popup}
-        <textarea ref={input} rows={1} placeholder="Сообщение · @ — упомянуть" value={text}
+        <button className="ghost attach" title="Прикрепить файл" onClick={() => filePicker.current?.click()}><Paperclip size={18} /></button>
+        <input ref={filePicker} type="file" multiple hidden onChange={e => { addFiles(e.target.files); e.target.value = '' }} />
+        <textarea ref={input} rows={1}
+          // Картинка или файл из буфера обмена — в окно отправки, текст — как обычно.
+          onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); addFiles(e.clipboardData.files) } }} placeholder="Сообщение · @ — упомянуть" value={text}
           onChange={e => { setText(e.target.value); mention.trackCaret() }} onSelect={mention.trackCaret} onClick={mention.trackCaret}
           onKeyDown={e => {
             if (mention.onKeyDown(e)) return
@@ -405,6 +457,7 @@ export function ChatView() {
         <button className="send" disabled={!text.trim()} onClick={submit}><Send size={18} /></button>
       </div>
       <ForwardDialog />
+      {pending.length > 0 && <SendFilesDialog files={pending} setFiles={setPending} draft={text} clearDraft={() => setText('')} />}
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
     </div>
   )

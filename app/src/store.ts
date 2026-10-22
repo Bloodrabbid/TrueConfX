@@ -48,6 +48,7 @@ interface State {
   quotes: Record<string, ServerMessage | null>
   members: Record<string, ChatMember[]>
   showMembers: boolean
+  showFiles: boolean
 
   set: (p: Partial<State>) => void
   login: (server: string, login: string, password: string, remember: boolean) => Promise<void>
@@ -56,6 +57,7 @@ interface State {
   openP2P: (callId: string) => Promise<void>
   loadOlder: (chatId: string) => Promise<void>
   send: (text: string) => Promise<void>
+  sendFiles: (files: { file: File; preview?: Blob }[], onProgress?: (index: number, part: number) => void) => Promise<void>
   removeMessage: (m: ServerMessage) => Promise<void>
   forwardTo: (chatId: string) => Promise<void>
   quoted: (chatId: string, messageId: string) => ServerMessage | null | undefined
@@ -105,6 +107,7 @@ export const useStore = create<State>((set, get) => ({
   quotes: {},
   members: {},
   showMembers: false,
+  showFiles: false,
   unread: {},
   alerts: {},
   notifyPrefs: { private: 'all', group: 'all', attention: true, preview: true, chats: {}, ...JSON.parse(localStorage.getItem('tcx.notify') ?? '{}') },
@@ -225,6 +228,20 @@ export const useStore = create<State>((set, get) => ({
     set({ messages: { ...get().messages, [chatId]: sortByTime([...older.filter(m => !known.has(m.messageId)), ...get().messages[chatId]]) } })
   },
 
+  sendFiles: async (files, onProgress) => {
+    const { client, chats, activeChatId, account, replyTo } = get()
+    const chat = chats.find(c => c.chatId === activeChatId)
+    if (!client || !chat) return
+    const target = { chatId: chat.chatId, chatType: chat.chatType, peer: peerOf(chat, account?.trueconfId) }
+    set({ replyTo: undefined })
+    for (const [i, f] of files.entries()) {
+      const fileId = await client.uploadFile(f.file, f.preview, p => onProgress?.(i, p))
+      const sent = await client.sendFile(target, fileId, i === 0 ? replyTo?.messageId : undefined)
+      // Ответ на отправку без имени и хэша файла — берём полное сообщение, чтобы показать вложение.
+      const full = sent.messageId ? await client.messageInfo(sent.messageId).catch(() => null) : null
+      if (full) pushMessage({ ...full, chatId: chat.chatId })
+    }
+  },
   send: async text => {
     const { client, activeChatId, chats, account, replyTo, editing } = get()
     const chat = chats.find(c => c.chatId === activeChatId)
@@ -522,6 +539,20 @@ window.native?.onDeepLink?.(handleLink)
 // Для отладки из DevTools: __tcx.getState()
 ;(window as any).__tcx = Object.assign(useStore, { TCClient, Conference })
 
+// Кружок с числом для значка на панели задач Windows, как у официального клиента.
+function badgeImage(n: number) {
+  const c = document.createElement('canvas')
+  c.width = c.height = 32
+  const g = c.getContext('2d')!
+  g.fillStyle = '#e5484d'
+  g.beginPath(); g.arc(16, 16, 16, 0, Math.PI * 2); g.fill()
+  g.fillStyle = '#fff'
+  g.font = `bold ${n > 99 ? 13 : n > 9 ? 17 : 20}px "Segoe UI", sans-serif`
+  g.textAlign = 'center'; g.textBaseline = 'middle'
+  g.fillText(n > 99 ? '99+' : String(n), 16, 17)
+  return c.toDataURL()
+}
+
 // Прочитанный чат больше не считается на значке; число на значке — сумма по чатам.
 let lastBadge = -1
 useStore.subscribe(s => {
@@ -530,7 +561,7 @@ useStore.subscribe(s => {
   for (const id of Object.keys(alerts)) if (!s.unread[id]) { delete alerts[id]; changed = true }
   if (changed) { useStore.setState({ alerts }); return }
   const total = Object.values(s.alerts).reduce((a, b) => a + b, 0)
-  if (total !== lastBadge) { lastBadge = total; window.native?.setBadge?.(total) }
+  if (total !== lastBadge) { lastBadge = total; window.native?.setBadge?.(total, window.native.platform === 'win32' ? badgeImage(total) : undefined) }
 })
 window.native?.onOpenChat?.(id => useStore.getState().openChat(id))
 

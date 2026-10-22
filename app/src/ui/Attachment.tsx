@@ -38,7 +38,8 @@ function useFile(hash: string | undefined, size: number) {
       if (e.readyState === 2) return setState({ kind: 'ready', url: e.downloadUrl })
       watching = true
       const ok = await client.watchUpload(hash, bytes => {
-        if (!alive) return
+        // Сервер иногда шлёт мусорное число вместо прогресса — такое пропускаем.
+        if (!alive || !Number.isFinite(bytes) || bytes > size * 2) return
         if (bytes >= size) { client.forgetFile(hash); load() } else setState({ kind: 'fetching', percent: Math.floor((100 * bytes) / size) })
       })
       if (alive) setState(st => (!ok ? { kind: 'missing' } : st.kind === 'loading' ? { kind: 'fetching', percent: 0 } : st))

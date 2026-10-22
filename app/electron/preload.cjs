@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('native', {
   platform: process.platform,
   notify: (title, body, opts = {}) => ipcRenderer.invoke('notify', { title, body, ...opts }),
-  setBadge: count => ipcRenderer.invoke('badge', count),
+  setBadge: (count, image) => ipcRenderer.invoke('badge', count, image),
   attention: () => ipcRenderer.invoke('attention'),
   onOpenChat: cb => ipcRenderer.on('open-chat', (_e, id) => cb(id)),
   saveCredentials: (server, login, password) => ipcRenderer.invoke('save-credentials', server, login, password),

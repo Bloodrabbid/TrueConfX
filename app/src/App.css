@@ -348,3 +348,26 @@ button.ghost.tiny { padding: 3px; }
 .chat-head-main .title .muted { display: inline-flex; margin-left: 6px; vertical-align: middle; }
 .primary.danger { background: var(--danger); border-color: var(--danger); }
 .ctx-menu kbd { white-space: nowrap; }
+
+/* Окно отправки файлов */
+.send-files-head { display: flex; align-items: center; justify-content: space-between; }
+.send-files-head h3 { margin: 0; }
+.send-files-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; margin: 12px 0; }
+.sf-image { position: relative; border-radius: 10px; overflow: hidden; background: var(--bg2, #00000010); display: flex; justify-content: center; }
+.sf-image img { max-width: 100%; max-height: 40vh; object-fit: contain; display: block; }
+.sf-file { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 40px 10px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.sf-remove { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 8px; border: none; background: #000000a0; color: #fff; display: grid; place-items: center; cursor: pointer; }
+.sf-file .sf-remove { top: 50%; transform: translateY(-50%); background: transparent; color: var(--muted); }
+.send-files .modal-actions { display: flex; align-items: center; gap: 8px; }
+.composer.drop { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.chat-view.dragging::after { content: 'Отпустите, чтобы отправить'; position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 2px dashed var(--accent); font-size: 16px; color: var(--text); pointer-events: none; z-index: 5; }
+.chat-view { position: relative; }
+
+/* Поиск по чату и панель файлов */
+.chat-search { display: flex; align-items: center; gap: 6px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--muted); }
+.chat-search input { flex: 1; border: none; background: transparent; padding: 6px 4px; box-shadow: none; }
+.chat-search input:focus { outline: none; }
+.chat-search .small-btn { font-size: 12px; white-space: nowrap; }
+.files-panel .list { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 12px; }
+.file-row { display: flex; flex-direction: column; gap: 4px; }
+.file-row .att-image { max-width: 100% !important; }

@@ -189,6 +189,38 @@ export class TCClient {
       ? this.chat(CHAT.SEND_P2P, { ...base, to: chat.peer })
       : this.chat(CHAT.SEND_GROUP, base)
   }
+  // Вложение: WS выдаёт uploadTaskId, файл уходит POST'ом на /bridge/api/client/v1/files,
+  // сервер возвращает temporalFileId, и его шлём сообщением типа FILE.
+  async uploadFile(file: File, preview?: Blob, onProgress?: (part: number) => void): Promise<string> {
+    const requestId = crypto.randomUUID()
+    const task = await this.sock.request({ method: 'createUploadTask', requestId, fileSize: file.size, fileName: file.name }, 'createUploadTask', f => f.requestId === requestId, 20000)
+    if (!task.uploadTaskId) throw new Error(task.errorText ?? 'Сервер не принял файл')
+    const form = new FormData()
+    form.append('file', file, file.name)
+    if (preview) form.append('preview', preview, crypto.randomUUID())
+    const body = await new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `https://${this.host}:${this.port}/bridge/api/client/v1/files`)
+      xhr.setRequestHeader('Upload-Task-Id', task.uploadTaskId)
+      xhr.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total)
+      xhr.onload = () => (xhr.status < 300 ? resolve(xhr.responseText) : reject(new Error(`Загрузка не удалась: HTTP ${xhr.status}`)))
+      xhr.onerror = () => reject(new Error('Загрузка не удалась: нет связи с сервером'))
+      xhr.send(form)
+    })
+    const id = JSON.parse(body).temporalFileId
+    if (!id) throw new Error('Сервер не вернул id файла')
+    return id
+  }
+  sendFile(chat: { chatId: string; chatType: number; peer?: string }, fileId: string, replyMessageId?: string): Promise<Partial<ServerMessage>> {
+    const base = { chatId: chat.chatId, type: MSG.FILE, replyMessageId, content: { fileId } }
+    return chat.chatType === CHAT_TYPE.P2P && chat.peer
+      ? this.chat(CHAT.SEND_P2P, { ...base, to: chat.peer })
+      : this.chat(CHAT.SEND_GROUP, base)
+  }
+  // Лимиты сервера: максимальный размер и запрещённые расширения.
+  uploadLimits(): Promise<{ upload?: number; extensions?: { block: boolean; list: string[] } }> {
+    return this.sock.request({ method: 'FileUploadLimits' }, 'fileUploadLimits', () => true, 10000) as any
+  }
   editText(chatId: string, messageId: string, text: string) { return this.chat(CHAT.EDIT_MSG, { chatId, messageId, type: MSG.TEXT, content: { text } }) }
   removeMessage(chatId: string, messageId: string, forAll = true) { return this.chat(CHAT.REMOVE_MSG, { chatId, messageId, forAll }) }
   forward(toChatId: string, messageId: string): Promise<Partial<ServerMessage>> { return this.chat(CHAT.FORWARD, { chatId: toChatId, forwardMessageId: messageId }) }

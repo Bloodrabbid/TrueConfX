@@ -1,5 +1,5 @@
 // Главный процесс: окно, обход CORS к серверу TrueConf, доступ к камере и экрану.
-const { app, BrowserWindow, session, desktopCapturer, shell, Notification, ipcMain, safeStorage } = require('electron')
+const { app, BrowserWindow, session, desktopCapturer, shell, Notification, ipcMain, safeStorage, nativeImage } = require('electron')
 const fs = require('fs')
 const path = require('path')
 
@@ -93,9 +93,13 @@ app.whenReady().then(() => {
     n.show()
   })
   // Счётчик непрочитанного на значке: в доке macOS и в Linux (Unity), на Windows — в заголовке окна.
-  ipcMain.handle('badge', (_e, count) => {
+  // На Windows системного счётчика нет: кружок с числом рисует окно и кладём его поверх значка на панели задач.
+  ipcMain.handle('badge', (_e, count, image) => {
     app.setBadgeCount(count)
-    if (process.platform === 'win32' && win) win.setTitle(count ? `(${count}) TrueConfX` : 'TrueConfX')
+    if (process.platform === 'win32' && win) {
+      win.setTitle(count ? `(${count}) TrueConfX` : 'TrueConfX')
+      win.setOverlayIcon(count && image ? nativeImage.createFromDataURL(image) : null, count ? `Непрочитанных: ${count}` : '')
+    }
   })
   // Новое сообщение, пока окно не в фокусе: значок подпрыгивает, окно мигает на панели задач.
   ipcMain.handle('attention', () => {
