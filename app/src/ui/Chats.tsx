@@ -6,6 +6,11 @@ import { Avatar, formatTime, dayLabel, PRESENCE_LABEL } from './common'
 import { RichText, plainText } from './RichText'
 import { Attachment } from './Attachment'
 
+function plural(n: number, one: string, few: string, many: string) {
+  const m10 = n % 10, m100 = n % 100
+  return `${n} ${m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many}`
+}
+
 const clock = (ts: number) => new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
 
 function chatTitle(c: ServerChat, nameOf: (id: string) => string, me?: string) {
@@ -209,7 +214,8 @@ function ForwardDialog() {
 }
 
 export function ChatView() {
-  const { chats, activeChatId, messages, account, nameOf, send, loadOlder, presence, replyTo, editing, set, draft } = useStore()
+  const { chats, activeChatId, messages, account, nameOf, send, loadOlder, presence, replyTo, editing, set, draft, members, showMembers, loadMembers } = useStore()
+  const memberCount = activeChatId ? members[activeChatId]?.length ?? 0 : 0
   const chat = chats.find(c => c.chatId === activeChatId)
   const list = activeChatId ? messages[activeChatId] ?? [] : []
   const text = activeChatId ? draft[activeChatId] ?? '' : ''
@@ -242,6 +248,12 @@ export function ChatView() {
     setNewBelow(0)
   }
   useEffect(() => { input.current?.focus() }, [activeChatId, replyTo])
+  // Участников группы подгружаем при открытии и после служебных «добавлен / удалён / вышел».
+  const lastSys = list.findLast(m => m.type >= 110 && m.type <= 112)?.messageId
+  useEffect(() => {
+    const c = chats.find(x => x.chatId === activeChatId)
+    if (c?.chatType === CHAT_TYPE.GROUP) loadMembers(c.chatId)
+  }, [activeChatId, lastSys]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!editing) return
     setText(plainText(messageText(editing)))
@@ -285,8 +297,10 @@ export function ChatView() {
         <Avatar name={title} id={peer ?? chat.chatId} size={36} />
         <div className="chat-head-main">
           <div className="title">{title}</div>
-          <div className="muted small">{peer ? PRESENCE_LABEL[presence[peer] ?? 'offline'] : 'Групповой чат'}</div>
+          {peer ? <div className="muted small">{PRESENCE_LABEL[presence[peer] ?? 'offline']}</div>
+            : <button className="muted small link-like" onClick={() => set({ showMembers: !showMembers })}>{memberCount ? plural(memberCount, 'участник', 'участника', 'участников') : 'Групповой чат'}</button>}
         </div>
+        {chat.chatType === CHAT_TYPE.GROUP && <button className={`ghost ${showMembers ? 'on' : ''}`} title="Участники" onClick={() => set({ showMembers: !showMembers })}><Users size={18} /></button>}
         <button className="ghost" title={chat.chatType === CHAT_TYPE.GROUP ? 'Созвон с участниками чата' : 'Позвонить'} onClick={() => openCall(chat)}><Video size={18} /></button>
       </div>
       <div className="messages" ref={scroller} onScroll={e => {

@@ -303,3 +303,25 @@ button.ghost.tiny { padding: 3px; }
 .modal.narrow { width: min(520px, 92vw); max-height: 86vh; overflow: hidden; }
 .chips { max-height: 168px; overflow-y: auto; }
 .modal-actions { position: sticky; bottom: 0; background: var(--panel); padding-top: 8px; }
+
+/* Панель участников */
+.members { width: 300px; flex: none; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.members-head { display: flex; align-items: flex-start; justify-content: space-between; padding: 14px 10px 10px 16px; }
+.shell.mac .members-head { padding-top: 30px; }
+.members-head h3 { margin: 0 0 2px; font-size: 14px; }
+.members-action { display: flex; align-items: center; gap: 10px; margin: 0 8px 6px; padding: 8px 10px; border-radius: 8px; color: var(--accent); font-weight: 550; text-align: left; }
+.members-action:hover { background: var(--hover); }
+.members-action.danger { color: var(--danger); margin: 6px 8px 12px; }
+.members-add { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.members-add .modal-actions { position: static; background: none; }
+.members .list { padding: 0 6px; }
+.member { padding: 6px 8px; }
+.member .member-tools { opacity: 0; transition: opacity .1s; } .member:hover .member-tools { opacity: 1; }
+.member .ghost { padding: 5px; }
+.role { color: var(--accent); font-weight: 550; margin-right: 6px; }
+.link-like { padding: 0; text-align: left; } .link-like:hover { color: var(--text); text-decoration: underline; }
+.chat-head .ghost.on { background: var(--hover); color: var(--text); }
+.member { position: relative; }
+.member .member-tools { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: var(--hover); border-radius: 8px; padding: 1px; pointer-events: none; }
+.member:hover .member-tools { pointer-events: auto; }
+.member:hover { background: var(--hover); }

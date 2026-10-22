@@ -47,6 +47,7 @@ export interface ServerChat {
   [k: string]: any
 }
 export interface FileEntry { name: string; fileId: string; size: number; mimeType: string; readyState: number; downloadUrl: string; previews?: { downloadUrl: string; mimeType: string }[] }
+export interface ChatMember { id: string; role: 'owner' | 'admin' | 'user' | string }
 export interface Contact { callId: string; displayName: string; [k: string]: any }
 export interface Account { trueconfId: string; instance: string; displayName: string; cid: string; rights: number; session: string; key?: string }
 
@@ -170,11 +171,14 @@ export class TCClient {
   addParticipant(chatId: string, callId: string) { return this.chat(CHAT.ADD_PART, { chatId, callId }) }
   removeChat(chatId: string) { return this.chat(CHAT.REMOVE_CHAT, { chatId }) }
   chatInfo(chatId: string) { return this.chat(CHAT.INFO, { chatId }) }
-  // Участники чата: [{ name: 'user@host', type, role }]
-  async participants(chatId: string): Promise<string[]> {
+  // Участники чата: [{ name: 'user@host', type, role: 'owner' | 'admin' | 'user' }]
+  async members(chatId: string): Promise<ChatMember[]> {
     const p = await this.chat(CHAT.PARTICIPANTS, { chatId, pageNum: 1, count: 1000 })
-    return (p.list ?? []).map((x: any) => x.name ?? x.callId).filter(Boolean)
+    return (p.list ?? []).map((x: any) => ({ id: x.name ?? x.callId, role: x.role ?? 'user' })).filter((m: ChatMember) => m.id)
   }
+  async participants(chatId: string): Promise<string[]> { return (await this.members(chatId)).map(m => m.id) }
+  kick(chatId: string, callId: string) { return this.chat(CHAT.KICK_PART, { chatId, callId, clearChat: false }) }
+  leaveChat(chatId: string) { return this.chat(CHAT.LEAVE, { chatId }) }
 
   sendText(chat: { chatId: string; chatType: number; peer?: string }, text: string, replyMessageId?: string): Promise<Partial<ServerMessage>> {
     const base = { chatId: chat.chatId, type: MSG.TEXT, replyMessageId, content: { text } }

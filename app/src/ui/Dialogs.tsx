@@ -11,7 +11,7 @@ function shortName(full: string) {
   return rest.length ? `${last} ${rest.map(p => `${p[0]}.`).join(' ')}` : full
 }
 
-function PeoplePicker({ value, onChange }: { value: string[]; onChange: (ids: string[]) => void }) {
+export function PeoplePicker({ value, onChange }: { value: string[]; onChange: (ids: string[]) => void }) {
   const { client, contacts, nameOf, account, presence } = useStore()
   const [q, setQ] = useState('')
   const [found, setFound] = useState<Contact[]>([])

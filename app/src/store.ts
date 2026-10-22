@@ -1,6 +1,6 @@
 // Состояние приложения: одна сессия TrueConf, чаты, контакты, текущая конференция.
 import { create } from 'zustand'
-import { TCClient, CHAT_TYPE, messageText, sortByTime, isSystem, type Account, type Contact, type Presence, type ServerChat, type ServerMessage } from './tc/client'
+import { TCClient, type ChatMember, CHAT_TYPE, messageText, sortByTime, isSystem, type Account, type Contact, type Presence, type ServerChat, type ServerMessage } from './tc/client'
 import { Conference } from './tc/conference'
 import { TCRest } from './tc/rest'
 import { plainText } from './ui/RichText'
@@ -38,6 +38,8 @@ interface State {
   forwarding?: ServerMessage
   draft: Record<string, string>
   quotes: Record<string, ServerMessage | null>
+  members: Record<string, ChatMember[]>
+  showMembers: boolean
 
   set: (p: Partial<State>) => void
   login: (server: string, login: string, password: string, remember: boolean) => Promise<void>
@@ -52,6 +54,10 @@ interface State {
   join: (confId: string, password?: string) => Promise<void>
   startCall: (topic: string, invitees: string[], opts?: { chatId?: string; postLink?: boolean }) => Promise<void>
   createGroupChat: (title: string, members: string[]) => Promise<void>
+  loadMembers: (chatId: string) => Promise<void>
+  addMembers: (chatId: string, ids: string[]) => Promise<void>
+  kickMember: (chatId: string, id: string) => Promise<void>
+  leaveChat: (chatId: string) => Promise<void>
   leave: () => void
   nameOf: (id: string) => string
   resolveNames: (ids: string[]) => void
@@ -73,6 +79,8 @@ export const useStore = create<State>((set, get) => ({
   messages: {},
   draft: {},
   quotes: {},
+  members: {},
+  showMembers: false,
   unread: {},
   contacts: [],
   presence: {},
@@ -264,6 +272,33 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  loadMembers: async chatId => {
+    const { client } = get()
+    if (!client) return
+    const list = await client.members(chatId).catch(() => null)
+    if (!list) return
+    set({ members: { ...get().members, [chatId]: list } })
+    get().resolveNames(list.map(m => m.id))
+    client.subscribePresence(list.map(m => m.id))
+  },
+
+  addMembers: async (chatId, ids) => {
+    const { client } = get()
+    for (const id of ids) await client?.addParticipant(chatId, id).catch(e => get().notify(`${get().nameOf(id)}: ${e.message}`))
+    await get().loadMembers(chatId)
+  },
+
+  kickMember: async (chatId, id) => {
+    await get().client?.kick(chatId, id).catch(e => get().notify(`Не удалось убрать: ${e.message}`))
+    await get().loadMembers(chatId)
+  },
+
+  leaveChat: async chatId => {
+    await get().client?.leaveChat(chatId).then(() => {
+      set({ chats: get().chats.filter(c => c.chatId !== chatId), activeChatId: undefined, showMembers: false })
+    }, e => get().notify(`Не удалось выйти: ${e.message}`))
+  },
+
   startCall: async (topic, invitees, opts = {}) => {
     const { rest, account, client } = get()
     if (!rest?.ready || !account || !client) { get().notify('Созвон недоступен: сервер не выдал доступ к API'); return }
@@ -293,8 +328,9 @@ export const useStore = create<State>((set, get) => ({
       const created = await client.createGroup(title)
       for (const id of members) await client.addParticipant(created.chatId, id).catch(e => get().notify(`${get().nameOf(id)}: ${e.message}`))
       const chat: ServerChat = { chatType: CHAT_TYPE.GROUP, title, ...created }
-      set({ chats: sortChats([chat, ...get().chats.filter(c => c.chatId !== chat.chatId)]), messages: { ...get().messages, [chat.chatId]: [] } })
-      get().openChat(chat.chatId)
+      set({ chats: sortChats([chat, ...get().chats.filter(c => c.chatId !== chat.chatId)]) })
+      // История нужна сразу: в ней служебные «… добавлен в чат».
+      await get().openChat(chat.chatId)
     } catch (e: any) {
       get().notify(`Не удалось создать чат: ${e.message}`)
     }

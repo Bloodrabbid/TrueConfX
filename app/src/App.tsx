@@ -8,6 +8,7 @@ import { Meet } from './ui/Meet'
 import { Settings } from './ui/Settings'
 import { Avatar } from './ui/common'
 import { Dialogs } from './ui/Dialogs'
+import { MembersPanel } from './ui/Members'
 import './App.css'
 
 function ScreenPicker() {
@@ -66,7 +67,7 @@ export default function App() {
         <button className="rail-btn" title="Выйти" onClick={logout}><LogOut size={19} /></button>
       </nav>
       <main className="content">
-        {tab === 'chats' && <><ChatList /><ChatView /></>}
+        {tab === 'chats' && <><ChatList /><ChatView /><MembersPanel /></>}
         {tab === 'contacts' && <Contacts />}
         {tab === 'meet' && <Meet />}
         {tab === 'settings' && <Settings />}
