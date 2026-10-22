@@ -81,6 +81,8 @@ jobs:
           cp "dist/TrueConfX-$ver-linux-amd64.deb" "/build/TrueConfX-$ver.deb"
           chown -R builder /build
           cd /build && sudo -u builder makepkg -f --noconfirm
+          # .SRCINFO для AUR должен совпадать с тем, что выводит makepkg.
+          sudo -u builder makepkg --printsrcinfo | diff -u - "$GITHUB_WORKSPACE/packaging/arch/.SRCINFO"
           # Пакет должен содержать запускаемый файл и ярлык — иначе сборка ломаная.
           tar -tf trueconfx-bin-*.pkg.tar.zst | grep -qx 'opt/TrueConfX/trueconfx'
           tar -tf trueconfx-bin-*.pkg.tar.zst | grep -qx 'usr/share/applications/trueconfx.desktop'
@@ -118,5 +120,5 @@ jobs:
           packaging/update-recipes.sh "$ver" dist
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add packaging/arch/PKGBUILD Casks/trueconfx.rb
+          git add packaging/arch/PKGBUILD packaging/arch/.SRCINFO Casks/trueconfx.rb
           git diff --cached --quiet || { git commit -m "Рецепты Arch и Homebrew для $ver"; git push origin main; }

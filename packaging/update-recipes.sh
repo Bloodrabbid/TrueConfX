@@ -16,12 +16,12 @@ cat > "$root/packaging/arch/PKGBUILD" <<PKG
 pkgname=trueconfx-bin
 pkgver=$ver
 pkgrel=1
-pkgdesc='Неофициальный современный клиент для TrueConf Server'
+pkgdesc='Unofficial modern client for TrueConf Server'
 arch=('x86_64')
 url='https://github.com/Bloodrabbid/TrueConfX'
 license=('custom')
 depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst' 'libnotify' 'libsecret' 'xdg-utils' 'at-spi2-core' 'util-linux-libs')
-optdepends=('libappindicator-gtk3: значок в трее')
+optdepends=('libappindicator-gtk3: tray icon')
 provides=('trueconfx')
 conflicts=('trueconfx')
 options=('!strip' '!debug')
@@ -38,6 +38,22 @@ package() {
   chmod 4755 "\$pkgdir/opt/TrueConfX/chrome-sandbox"
 }
 PKG
+
+# .SRCINFO — метаданные для AUR, тот же вывод, что даёт makepkg --printsrcinfo (CI это сверяет).
+deps=(gtk3 nss alsa-lib libxss libxtst libnotify libsecret xdg-utils at-spi2-core util-linux-libs)
+{
+  printf 'pkgbase = trueconfx-bin\n'
+  printf '\tpkgdesc = Unofficial modern client for TrueConf Server\n'
+  printf '\tpkgver = %s\n\tpkgrel = 1\n' "$ver"
+  printf '\turl = https://github.com/Bloodrabbid/TrueConfX\n\tarch = x86_64\n\tlicense = custom\n'
+  for d in "${deps[@]}"; do printf '\tdepends = %s\n' "$d"; done
+  printf '\toptdepends = libappindicator-gtk3: tray icon\n'
+  printf '\tprovides = trueconfx\n\tconflicts = trueconfx\n'
+  printf '\tnoextract = TrueConfX-%s.deb\n' "$ver"
+  printf '\toptions = !strip\n\toptions = !debug\n'
+  printf '\tsource = TrueConfX-%s.deb::https://github.com/Bloodrabbid/TrueConfX/releases/download/v%s/TrueConfX-%s-linux-amd64.deb\n' "$ver" "$ver" "$ver"
+  printf '\tsha256sums = %s\n\npkgname = trueconfx-bin\n' "$deb"
+} > "$root/packaging/arch/.SRCINFO"
 
 cat > "$root/Casks/trueconfx.rb" <<CASK
 # Homebrew cask. Установка:

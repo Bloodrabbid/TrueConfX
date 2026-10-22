@@ -3,12 +3,12 @@
 pkgname=trueconfx-bin
 pkgver=0.2.4
 pkgrel=1
-pkgdesc='Неофициальный современный клиент для TrueConf Server'
+pkgdesc='Unofficial modern client for TrueConf Server'
 arch=('x86_64')
 url='https://github.com/Bloodrabbid/TrueConfX'
 license=('custom')
 depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst' 'libnotify' 'libsecret' 'xdg-utils' 'at-spi2-core' 'util-linux-libs')
-optdepends=('libappindicator-gtk3: значок в трее')
+optdepends=('libappindicator-gtk3: tray icon')
 provides=('trueconfx')
 conflicts=('trueconfx')
 options=('!strip' '!debug')
