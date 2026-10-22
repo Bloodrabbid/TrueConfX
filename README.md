@@ -34,11 +34,21 @@ brew tap bloodrabbid/trueconfx https://github.com/Bloodrabbid/TrueConfX
 brew install --cask trueconfx
 ```
 
-**Arch Linux:** в релизе есть родной пакет `trueconfx-bin-*.pkg.tar.zst`:
+**Arch Linux:** свой репозиторий pacman в релизах GitHub. Добавьте в `/etc/pacman.conf`:
+
+```ini
+[trueconfx]
+SigLevel = Optional TrustAll
+Server = https://github.com/Bloodrabbid/TrueConfX/releases/latest/download
+```
+
+и поставьте пакет — дальше он обновляется обычным `pacman -Syu`:
 
 ```sh
-sudo pacman -U trueconfx-bin-*-x86_64.pkg.tar.zst
+sudo pacman -Sy trueconfx-bin
 ```
+
+Можно и без репозитория: скачать `trueconfx-bin-*.pkg.tar.zst` из релиза и `sudo pacman -U` его.
 
 Или собрать самому по [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD): `makepkg -si` в папке с ним.
 

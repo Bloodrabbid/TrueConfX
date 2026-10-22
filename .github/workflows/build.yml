@@ -86,12 +86,17 @@ jobs:
           # Пакет должен содержать запускаемый файл и ярлык — иначе сборка ломаная.
           tar -tf trueconfx-bin-*.pkg.tar.zst | grep -qx 'opt/TrueConfX/trueconfx'
           tar -tf trueconfx-bin-*.pkg.tar.zst | grep -qx 'usr/share/applications/trueconfx.desktop'
-          cp trueconfx-bin-*.pkg.tar.zst "$GITHUB_WORKSPACE/"
+          # База своего репозитория pacman: лежит в релизе, Server = .../releases/latest/download.
+          sudo -u builder repo-add trueconfx.db.tar.gz trueconfx-bin-*.pkg.tar.zst
+          mkdir "$GITHUB_WORKSPACE/arch-out"
+          cp trueconfx-bin-*.pkg.tar.zst trueconfx.db.tar.gz trueconfx.files.tar.gz "$GITHUB_WORKSPACE/arch-out/"
+          # trueconfx.db и trueconfx.files — симлинки; в релиз кладём настоящие копии.
+          cp -L trueconfx.db trueconfx.files "$GITHUB_WORKSPACE/arch-out/"
 
       - uses: actions/upload-artifact@v4
         with:
           name: TrueConfX-Arch
-          path: trueconfx-bin-*.pkg.tar.zst
+          path: arch-out/*
           if-no-files-found: error
 
   release:
@@ -122,3 +127,18 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add packaging/arch/PKGBUILD packaging/arch/.SRCINFO Casks/trueconfx.rb
           git diff --cached --quiet || { git commit -m "Рецепты Arch и Homebrew для $ver"; git push origin main; }
+
+  # Проверка репозитория pacman так, как его подключит пользователь: чистый Arch, установка из релиза.
+  pacman-repo:
+    needs: release
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: pacman -S trueconfx-bin из релиза
+        run: |
+          printf '\n[trueconfx]\nSigLevel = Optional TrustAll\nServer = https://github.com/Bloodrabbid/TrueConfX/releases/latest/download\n' >> /etc/pacman.conf
+          pacman -Sy --noconfirm
+          pacman -Si trueconfx-bin
+          pacman -S --noconfirm trueconfx-bin
+          test -x /usr/bin/trueconfx
+          pacman -Qi trueconfx-bin | grep -E '^(Name|Version)'
