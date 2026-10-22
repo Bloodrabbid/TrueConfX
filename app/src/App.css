@@ -373,3 +373,5 @@ button.ghost.tiny { padding: 3px; }
 .file-row .att-image { max-width: 100% !important; }
 .chip-toggle { display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; white-space: nowrap; }
 .chip-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.read-mark { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--muted); cursor: default; }
+.read-mark.read { color: var(--accent); }

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus, Pin, PinOff, Bell, BellOff, AtSign, Eraser, MoreVertical, Paperclip, Info, FolderOpen, ChevronUp } from 'lucide-react'
+import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus, Pin, PinOff, Bell, BellOff, AtSign, Eraser, MoreVertical, Paperclip, Info, FolderOpen, ChevronUp, Check, CheckCheck } from 'lucide-react'
 import { useStore, peerOf, linkedChatOf, type NotifyLevel } from '../store'
 import { CHAT_TYPE, messageText, systemText, isSystem, MSG, type ServerChat, type ServerMessage } from '../tc/client'
 import { Avatar, formatTime, dayLabel, PRESENCE_LABEL } from './common'
@@ -191,6 +191,17 @@ function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }
   )
 }
 
+// Галочки под своим сообщением: одна — доставлено на сервер, две — прочитано.
+// Имена прочитавших знаем только из событий, пришедших, пока приложение открыто.
+function ReadMark({ m }: { m: ServerMessage }) {
+  const readers = useStore(s => s.readers[m.chatId])
+  const nameOf = useStore(s => s.nameOf)
+  const who = Object.entries(readers ?? {}).filter(([, ts]) => ts >= m.timestamp).map(([id]) => nameOf(id).split(' ').slice(0, 2).join(' '))
+  const read = m.isRead || who.length > 0
+  const title = !read ? 'Доставлено, ещё не прочитано' : who.length ? `Прочитали: ${who.join(', ')}` : 'Прочитано'
+  return <span className={`read-mark ${read ? 'read' : ''}`} title={title}>{read ? <CheckCheck size={14} /> : <Check size={14} />}</span>
+}
+
 function Bubble({ m, mine, showAuthor, onQuote, onJump, onMenu }: { m: ServerMessage; mine: boolean; showAuthor: boolean; onQuote: (m: ServerMessage, fragment: string) => void; onJump: (id: string) => void; onMenu: (s: MenuState) => void }) {
   const { nameOf, set } = useStore()
   const ref = useRef<HTMLDivElement>(null)
@@ -213,7 +224,7 @@ function Bubble({ m, mine, showAuthor, onQuote, onJump, onMenu }: { m: ServerMes
           {m.replyMessageId && <ReplyQuote chatId={m.chatId} messageId={m.replyMessageId} onJump={onJump} />}
           {m.type === MSG.FILE ? <Attachment m={m} /> : <span className="text"><RichText html={text} /></span>}
           {m.type === MSG.FILE && c.description ? <span className="text"><RichText html={c.description} /></span> : null}
-          <span className="meta">{(m as any).edited && 'изм. '}{clock(m.timestamp)}</span>
+          <span className="meta">{(m as any).edited && 'изм. '}{clock(m.timestamp)}{mine && <ReadMark m={m} />}</span>
         </div>
         <div className="msg-tools" onMouseDown={e => e.preventDefault()}>
           {tools.map(a => <button key={a.key} title={a.label} className={a.danger ? 'danger' : ''} onClick={a.run}><a.icon size={15} /></button>)}

@@ -129,6 +129,8 @@ export class TCClient {
     s.on('logoutResponse', f => this.emit('loggedOut', f.cause))
     s.on('chatV2', f => {
       if (f.containerType !== 3) return
+      // Последние 50 событий чатов — для отладки из DevTools: __chatEvents.
+      const log = ((globalThis as any).__chatEvents ??= [] as Frame[]); log.push(f); if (log.length > 50) log.shift()
       const ev = f.eventType ?? f.payload?.eventType
       const body = f.event ?? f.payload?.event ?? f.payload
       if (ev === CHAT_EVENT.RECEIVE) this.emit('message', body)

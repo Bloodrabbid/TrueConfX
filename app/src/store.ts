@@ -49,6 +49,9 @@ interface State {
   members: Record<string, ChatMember[]>
   showMembers: boolean
   showFiles: boolean
+  // Кто до какого момента прочитал чат: chatId → callId → время последнего прочитанного сообщения.
+  // Сервер хранит только флаг «прочитано кем-то», поэтому имена знаем лишь из событий, пока приложение открыто.
+  readers: Record<string, Record<string, number>>
 
   set: (p: Partial<State>) => void
   login: (server: string, login: string, password: string, remember: boolean) => Promise<void>
@@ -108,6 +111,7 @@ export const useStore = create<State>((set, get) => ({
   members: {},
   showMembers: false,
   showFiles: false,
+  readers: {},
   unread: {},
   alerts: {},
   notifyPrefs: { private: 'all', group: 'all', attention: true, preview: true, chats: {}, ...JSON.parse(localStorage.getItem('tcx.notify') ?? '{}') },
@@ -502,6 +506,24 @@ function wireClient(client: TCClient) {
       window.native?.notify(title, text, { chatId: m.chatId })
       if (s.notifyPrefs.attention) window.native?.attention?.()
     }
+  })
+  client.on('messageRead', (e: any) => {
+    const s = st.getState()
+    const chatId = e?.chatId, messageId = e?.messageId
+    if (!chatId) return
+    const list = s.messages[chatId] ?? []
+    const target = list.find(m => m.messageId === messageId)
+    const ts = target?.timestamp ?? e.timestamp ?? Date.now()
+    const me = s.account?.trueconfId
+    const who = String(e.userId ?? e.callId ?? e.name ?? e.reader ?? e.sender ?? '').split('/')[0]
+    const patch: Partial<State> = {
+      messages: { ...s.messages, [chatId]: list.map(m => (m.sender === me && !m.isRead && m.timestamp <= ts ? { ...m, isRead: true } : m)) },
+    }
+    if (who && who !== me) {
+      patch.readers = { ...s.readers, [chatId]: { ...s.readers[chatId], [who]: Math.max(ts, s.readers[chatId]?.[who] ?? 0) } }
+      s.resolveNames([who])
+    }
+    st.setState(patch)
   })
   client.on('messageEdited', m => {
     const s = st.getState()
