@@ -83,6 +83,8 @@ export type NotifyLevel = 'all' | 'mentions' | 'off'
 export interface NotifyPrefs { private: NotifyLevel; group: NotifyLevel; attention: boolean; preview: boolean; chats: Record<string, NotifyLevel> }
 
 const pendingNames = new Set<string>()
+// Чаты, история которых уже загружена с сервера в этой сессии.
+const historyLoaded = new Set<string>()
 // Конференции, которые мы создали для созвона и должны прибрать за собой.
 const adHoc = new Set<string>()
 const saved = JSON.parse(localStorage.getItem('tcx.prefs') ?? '{}')
@@ -198,9 +200,12 @@ export const useStore = create<State>((set, get) => ({
     const { client, messages } = get()
     set({ activeChatId: chatId, tab: 'chats', replyTo: undefined, editing: undefined, unread: { ...get().unread, [chatId]: 0 } })
     if (!client) return
-    if (!messages[chatId]) {
+    // Грузим историю при первом открытии, даже если в списке уже есть пришедшие на лету сообщения.
+    if (!historyLoaded.has(chatId) || !messages[chatId]) {
       const list = await client.history(chatId, 60)
-      set({ messages: { ...get().messages, [chatId]: list } })
+      const live = (get().messages[chatId] ?? []).filter(m => !list.some(x => x.messageId === m.messageId))
+      historyLoaded.add(chatId)
+      set({ messages: { ...get().messages, [chatId]: sortByTime([...list, ...live]) } })
       get().resolveNames(list.map(m => m.sender))
     }
     const last = get().messages[chatId]?.at(-1)
@@ -508,7 +513,9 @@ function wireClient(client: TCClient) {
     const s = st.getState()
     const chatId = e?.chatId
     if (!chatId) return
-    const list = s.messages[chatId] ?? []
+    const list = s.messages[chatId]
+    // История чата ещё не загружена — нечего отмечать (и нельзя заводить пустой список: openChat решит, что история есть).
+    if (!list) return
     const ts = list.find(m => m.messageId === e.messageId)?.timestamp ?? Date.now()
     const me = s.account?.trueconfId
     st.setState({ messages: { ...s.messages, [chatId]: list.map(m => (m.sender === me && !m.isRead && m.timestamp <= ts ? { ...m, isRead: true } : m)) } })
