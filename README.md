@@ -22,7 +22,16 @@
 - `src/tc/turn.ts` — расшифровка пароля TURN (AES-GCM + HKDF).
 - `docs/PROTOCOL-*.md` — восстановленный протокол со ссылками на код веб-клиента.
 
-## Запуск
+## Скачать
+
+Готовые установщики — на странице [Releases](https://github.com/Bloodrabbid/TrueConfX/releases):
+`.dmg` (macOS, Apple Silicon и Intel), `.exe` (Windows), `.AppImage` и `.deb` (Linux).
+
+Пакеты не подписаны. На macOS при первом запуске: правый клик по приложению → «Открыть»,
+или `xattr -dr com.apple.quarantine /Applications/TrueConfX.app`.
+На Windows SmartScreen: «Подробнее» → «Выполнить в любом случае».
+
+## Запуск из исходников
 
 ```bash
 cd app

@@ -11,14 +11,9 @@
     "dev:web": "vite",
     "typecheck": "tsc -b --noEmit",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder --publish never"
   },
-  "dependencies": {
-    "lucide-react": "^1.61.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "zustand": "^5.0.16"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
@@ -28,10 +23,14 @@
     "cross-env": "^10.1.0",
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
+    "lucide-react": "^1.61.0",
     "oxlint": "^1.88.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "~6.0.3",
     "vite": "^8.3.4",
-    "wait-on": "^9.5.1"
+    "wait-on": "^9.5.1",
+    "zustand": "^5.0.16"
   },
   "productName": "TrueConfX",
   "main": "electron/main.cjs",
@@ -53,29 +52,66 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "category": "public.app-category.business",
+      "identity": null,
       "extendInfo": {
         "NSCameraUsageDescription": "Камера для видеоконференций",
-        "NSMicrophoneUsageDescription": "Микрофон для видеоконференций"
+        "NSMicrophoneUsageDescription": "Микрофон для видеоконференций",
+        "NSScreenCaptureUsageDescription": "Демонстрация экрана в конференции"
       }
     },
     "win": {
       "target": [
-        "nsis"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "category": "Network"
+      "category": "Network",
+      "maintainer": "Bloodrabbid <Bloodrabbid@users.noreply.github.com>"
     },
     "directories": {
       "buildResources": "build",
       "output": "release"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": null,
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
-  }
+  },
+  "description": "Неофициальный современный кроссплатформенный клиент для TrueConf Server",
+  "author": {
+    "name": "Bloodrabbid",
+    "email": "Bloodrabbid@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/Bloodrabbid/TrueConfX",
+  "license": "UNLICENSED"
 }
