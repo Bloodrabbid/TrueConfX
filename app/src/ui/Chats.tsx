@@ -262,12 +262,17 @@ export function ChatView() {
   const [search, setSearch] = useState<string | null>(null)
   const [hit, setHit] = useState(0)
   // Поиск по загруженной истории: текст сообщений и имена файлов. На сервере поиска по чату нет.
+  const [mentionsOnly, setMentionsOnly] = useState(false)
+  const myId = account?.trueconfId
   const found = useMemo(() => {
     const q = search?.trim().toLowerCase()
-    if (!q) return []
-    return list.filter(m => !isSystem(m) && `${plainText(messageText(m))} ${m.content?.file_name ?? ''}`.toLowerCase().includes(q))
-  }, [search, list])
-  useEffect(() => { setSearch(null) }, [activeChatId])
+    if (!q && !mentionsOnly) return []
+    return list.filter(m => !isSystem(m)
+      // «@ меня» — сообщения со ссылкой-упоминанием на вас, как их шлёт официальный клиент.
+      && (!mentionsOnly || messageText(m).includes(`trueconf:${myId}`))
+      && (!q || `${plainText(messageText(m))} ${m.content?.file_name ?? ''}`.toLowerCase().includes(q)))
+  }, [search, list, mentionsOnly, myId])
+  useEffect(() => { setSearch(null); setMentionsOnly(false) }, [activeChatId])
   // Набрали запрос — сразу показываем самое новое совпадение.
   useEffect(() => {
     const m = found.at(-1)
@@ -275,7 +280,7 @@ export function ChatView() {
     const el = document.getElementById(`m-${m.messageId}`)
     el?.scrollIntoView({ block: 'center' })
     el?.classList.add('flash'); setTimeout(() => el?.classList.remove('flash'), 1200)
-  }, [search]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, mentionsOnly]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 'f') { e.preventDefault(); setSearch(q => q ?? '') } }
     addEventListener('keydown', h)
@@ -376,7 +381,7 @@ export function ChatView() {
             : <button className="muted small link-like" onClick={() => set({ showMembers: !showMembers, showFiles: false })}>{memberCount ? plural(memberCount, 'участник', 'участника', 'участников') : 'Групповой чат'}</button>}
         </div>
         {chat.chatType === CHAT_TYPE.GROUP && <button className={`ghost ${showMembers ? 'on' : ''}`} title="Участники" onClick={() => set({ showMembers: !showMembers, showFiles: false })}><Users size={18} /></button>}
-        <button className={`ghost ${search !== null ? 'on' : ''}`} title="Поиск по чату (⌘F)" onClick={() => setSearch(search === null ? '' : null)}><Search size={18} /></button>
+        <button className={`ghost ${search !== null ? 'on' : ''}`} title="Поиск по чату (⌘F)" onClick={() => { setSearch(search === null ? '' : null); setMentionsOnly(false) }}><Search size={18} /></button>
         <button className="ghost" title={chat.chatType === CHAT_TYPE.GROUP ? 'Созвон с участниками чата' : 'Позвонить'} onClick={() => openCall(chat)}><Video size={18} /></button>
         <button className="ghost" title="Действия с чатом" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setChatMenu({ x: r.right - 220, y: r.bottom + 4, items: chatActions(chat) }) }}><MoreVertical size={18} /></button>
         {chatMenu && <ContextMenu menu={chatMenu} onClose={() => setChatMenu(null)} />}
@@ -384,12 +389,13 @@ export function ChatView() {
       {search !== null && (
         <div className="chat-search">
           <Search size={15} />
-          <input autoFocus placeholder="Поиск в чате" value={search} onChange={e => { setSearch(e.target.value); setHit(0) }}
+          <input autoFocus placeholder={mentionsOnly ? 'Упоминания вас — уточнить словом' : 'Поиск в чате'} value={search} onChange={e => { setSearch(e.target.value); setHit(0) }}
             onKeyDown={e => {
               if (e.key === 'Escape') setSearch(null)
               if (e.key === 'Enter' && found.length) { const n = (hit + (e.shiftKey ? found.length - 1 : 1)) % found.length; setHit(n); onJump(found[found.length - 1 - n].messageId) }
             }} />
-          <span className="muted small">{search.trim() ? (found.length ? `${Math.min(hit + 1, found.length)} из ${found.length}` : 'Не найдено') : ''}</span>
+          <button className={`chip-toggle ${mentionsOnly ? 'on' : ''}`} title="Только сообщения, где упомянули вас" onClick={() => { setMentionsOnly(!mentionsOnly); setHit(0) }}><AtSign size={13} />меня</button>
+          <span className="muted small">{search.trim() || mentionsOnly ? (found.length ? `${Math.min(hit + 1, found.length)} из ${found.length}` : 'Не найдено') : ''}</span>
           <button className="ghost" title="Раньше (Enter)" disabled={!found.length} onClick={() => { const n = (hit + 1) % found.length; setHit(n); onJump(found[found.length - 1 - n].messageId) }}><ChevronUp size={16} /></button>
           <button className="ghost" title="Позже (Shift+Enter)" disabled={!found.length} onClick={() => { const n = (hit + found.length - 1) % found.length; setHit(n); onJump(found[found.length - 1 - n].messageId) }}><ChevronDown size={16} /></button>
           <button className="ghost small-btn" title="Загрузить более ранние сообщения и искать в них" onClick={() => loadOlder(chat.chatId)}>Искать раньше</button>
