@@ -4,9 +4,9 @@
 cask "trueconfx" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.2.3"
-  sha256 arm:   "8be631ec33829fbfaaf8386aaf49e1216d7f9a2e87a845f2efe00c36096f328e",
-         intel: "c75380391c37026effb0cf2ee1a6cc64d14ac7e7c5c5b19fc24d364736a49c91"
+  version "0.2.4"
+  sha256 arm:   "e4c0bda632238f9727169e25244e37349e7c0cf6b6772522c9784e58523ea630",
+         intel: "9f3e7726e8ad1969a3e6b5396b73a6be7e0285d81c21f63efcbf525bc8e2891f"
 
   url "https://github.com/Bloodrabbid/TrueConfX/releases/download/v#{version}/TrueConfX-#{version}-mac-#{arch}.dmg"
   name "TrueConfX"
