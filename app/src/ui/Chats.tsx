@@ -191,15 +191,15 @@ function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }
   )
 }
 
-// Галочки под своим сообщением: одна — доставлено на сервер, две — прочитано.
-// Имена прочитавших знаем только из событий, пришедших, пока приложение открыто.
+// Галочки под своим сообщением: одна — доставлено, две — прочитано.
+// Сервер знает только «прочитано кем-то»: в личном чате это собеседник, в группе имён нет.
 function ReadMark({ m }: { m: ServerMessage }) {
-  const readers = useStore(s => s.readers[m.chatId])
+  const chat = useStore(s => s.chats.find(c => c.chatId === m.chatId))
+  const me = useStore(s => s.account?.trueconfId)
   const nameOf = useStore(s => s.nameOf)
-  const who = Object.entries(readers ?? {}).filter(([, ts]) => ts >= m.timestamp).map(([id]) => nameOf(id).split(' ').slice(0, 2).join(' '))
-  const read = m.isRead || who.length > 0
-  const title = !read ? 'Доставлено, ещё не прочитано' : who.length ? `Прочитали: ${who.join(', ')}` : 'Прочитано'
-  return <span className={`read-mark ${read ? 'read' : ''}`} title={title}>{read ? <CheckCheck size={14} /> : <Check size={14} />}</span>
+  const peer = chat?.chatType === CHAT_TYPE.P2P ? peerOf(chat, me) : undefined
+  const title = !m.isRead ? 'Доставлено, ещё не прочитано' : peer ? `Прочитал(а) ${nameOf(peer).split(' ').slice(0, 2).join(' ')}` : 'Прочитано хотя бы одним участником'
+  return <span className={`read-mark ${m.isRead ? 'read' : ''}`} title={title}>{m.isRead ? <CheckCheck size={14} /> : <Check size={14} />}</span>
 }
 
 function Bubble({ m, mine, showAuthor, onQuote, onJump, onMenu }: { m: ServerMessage; mine: boolean; showAuthor: boolean; onQuote: (m: ServerMessage, fragment: string) => void; onJump: (id: string) => void; onMenu: (s: MenuState) => void }) {
