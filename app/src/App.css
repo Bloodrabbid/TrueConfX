@@ -250,3 +250,7 @@ button.ghost.tiny { padding: 3px; }
 @keyframes rise-in { from { opacity: 0; transform: translateY(6px); } }
 .att-retry { margin-left: 8px; font-size: 12px; font-weight: 550; color: var(--accent); padding: 4px 8px; border-radius: 6px; flex: none; cursor: pointer; }
 .att-retry:hover { background: var(--accent-soft); }
+.brand-icon { width: 40px; height: 40px; margin: -4px; }
+.server-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.server-row b { font-weight: 600; color: var(--text2); }
+.small-btn { font-size: 12.5px; padding: 5px 10px !important; color: var(--text2) !important; border: 1px solid var(--line2); }

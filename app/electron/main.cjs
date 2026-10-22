@@ -35,6 +35,7 @@ function installCorsBridge(ses) {
 
 function createWindow() {
   win = new BrowserWindow({
+    icon: path.join(__dirname, '../build/icon.png'),
     width: 1280, height: 820, minWidth: 900, minHeight: 600,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#0f1115',
@@ -51,6 +52,8 @@ let pendingLink = process.argv.find(a => a.startsWith('trueconf'))
 app.on('open-url', (e, url) => { e.preventDefault(); pendingLink = url; win?.webContents.send('deep-link', url) })
 
 app.whenReady().then(() => {
+  // В dev-режиме у Electron своя иконка в доке — подменяем на нашу.
+  if (process.platform === 'darwin') app.dock?.setIcon(path.join(__dirname, '../build/icon.png'))
   const ses = session.defaultSession
   installCorsBridge(ses)
   ses.setPermissionRequestHandler((_wc, perm, cb) => cb(['media', 'notifications', 'display-capture', 'fullscreen', 'clipboard-sanitized-write'].includes(perm)))

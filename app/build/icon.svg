@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c2c31"/>
+      <stop offset="1" stop-color="#151517"/>
+    </linearGradient>
+    <linearGradient id="glyph" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f4f6"/>
+      <stop offset="1" stop-color="#d6d6db"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <!-- Плашка по сетке иконок macOS: 824×824 с отступом 100 -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="185" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>
+  <!-- Камера в форме облачка сообщения: видео + чат -->
+  <g fill="url(#glyph)">
+    <path d="M326 362 H578 Q642 362 642 426 V558 Q642 622 578 622 H392 L318 684 Q300 698 300 676 V614 Q262 600 262 558 V426 Q262 362 326 362 Z"/>
+    <path d="M672 452 L752 408 Q782 392 782 426 V558 Q782 592 752 576 L672 532 Z"/>
+  </g>
+  <!-- Единственный акцент: точка «в эфире» -->
+  <circle cx="586" cy="418" r="40" fill="#1d1d21"/>
+  <circle cx="586" cy="418" r="26" fill="#6d9eeb"/>
+</svg>

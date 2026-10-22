@@ -10,6 +10,7 @@ interface State {
   client?: TCClient
   account?: Account
   server: string
+  lastLogin: string
   connecting: boolean
   error?: string
   tab: Tab
@@ -53,7 +54,9 @@ const pendingNames = new Set<string>()
 const saved = JSON.parse(localStorage.getItem('tcx.prefs') ?? '{}')
 
 export const useStore = create<State>((set, get) => ({
+  // Сервер вводят при первом входе, дальше он хранится в настройках.
   server: saved.server ?? '',
+  lastLogin: saved.lastLogin ?? '',
   connecting: false,
   tab: 'chats',
   chats: [],
@@ -72,7 +75,7 @@ export const useStore = create<State>((set, get) => ({
   set: p => {
     set(p)
     const s = get()
-    localStorage.setItem('tcx.prefs', JSON.stringify({ server: s.server, theme: s.theme, devices: s.devices, joinAudio: s.joinAudio, joinVideo: s.joinVideo }))
+    localStorage.setItem('tcx.prefs', JSON.stringify({ server: s.server, lastLogin: s.lastLogin, theme: s.theme, devices: s.devices, joinAudio: s.joinAudio, joinVideo: s.joinVideo }))
   },
 
   nameOf: id => {
@@ -99,13 +102,15 @@ export const useStore = create<State>((set, get) => ({
 
   notify: text => { set({ toast: text }); setTimeout(() => get().toast === text && set({ toast: undefined }), 4000) },
 
-  login: async (server, login, password, remember) => {
+  login: async (rawServer, login, password, remember) => {
+    const server = normalizeServer(rawServer)
+    if (!server) { set({ error: 'Укажите адрес сервера' }); return }
     set({ connecting: true, error: undefined })
     const [host, port] = server.split(':')
     const client = new TCClient(host, Number(port) || 443)
     try {
       const account = await client.login(login.includes('@') ? login : `${login}@${host}`, password)
-      get().set({ server })
+      get().set({ server, lastLogin: login })
       if (remember) await window.native?.saveCredentials?.(server, login, password)
       set({ client, account, connecting: false })
       wireClient(client)
@@ -227,6 +232,11 @@ export const useStore = create<State>((set, get) => ({
 
   leave: () => { get().conference?.hangup(); set({ conference: undefined }) },
 }))
+
+// «https://tc.example.com/c/123» → «tc.example.com»; порт сохраняем.
+export function normalizeServer(input: string) {
+  return input.trim().replace(/^[a-z]+:\/\//i, '').replace(/[/?#].*$/, '').toLowerCase()
+}
 
 export function peerOf(chat: ServerChat, me?: string): string | undefined {
   if (chat.chatType !== CHAT_TYPE.P2P) return undefined

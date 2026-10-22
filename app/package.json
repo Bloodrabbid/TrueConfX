@@ -40,7 +40,8 @@
     "productName": "TrueConfX",
     "files": [
       "dist/**",
-      "electron/**"
+      "electron/**",
+      "build/icon.png"
     ],
     "protocols": [
       {
@@ -71,6 +72,10 @@
         "deb"
       ],
       "category": "Network"
+    },
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
     }
   }
 }

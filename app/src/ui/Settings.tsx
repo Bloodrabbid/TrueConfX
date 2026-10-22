@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 
 export function Settings() {
-  const { devices, set, account, server, client, conference } = useStore()
+  const { devices, set, account, server, client, conference, logout } = useStore()
   const [list, setList] = useState<MediaDeviceInfo[]>([])
   const [level, setLevel] = useState(0)
   const [status, setStatus] = useState('')
@@ -44,7 +44,10 @@ export function Settings() {
       <div className="card">
         <h3>Учётная запись</h3>
         <p><b>{account?.displayName}</b> <span className="muted">{account?.trueconfId}</span></p>
-        <p className="muted small">Сервер {server} · протокол v{client?.protocolVersion}</p>
+        <div className="server-row">
+          <span className="muted small">Сервер <b>{server}</b> · протокол v{client?.protocolVersion}</span>
+          <button className="ghost small-btn" onClick={() => { if (confirm('Выйти и войти на другой сервер?')) logout() }}>Сменить сервер</button>
+        </div>
         <div className="invite"><input placeholder="Текстовый статус: «на встрече до 15:00»" value={status} onChange={e => setStatus(e.target.value)} />
           <button className="primary small" onClick={() => client?.setStatusText(status)}>Сохранить</button></div>
       </div>
