@@ -1,8 +1,8 @@
 // Окна «Новый чат» и «Созвон» и общий для них выбор людей с поиском по адресной книге сервера.
 import { useEffect, useState } from 'react'
-import { X, Video, Users, Search } from 'lucide-react'
-import { useStore } from '../store'
-import type { Contact } from '../tc/client'
+import { X, Video, Users, Search, Pencil, Trash2, Eraser } from 'lucide-react'
+import { useStore, peerOf } from '../store'
+import { CHAT_TYPE, type Contact } from '../tc/client'
 import { Avatar } from './common'
 
 // «Рыжаков Алексей Павлович» → «Рыжаков А. П.»
@@ -100,13 +100,61 @@ function CallDialog({ topic: t0, invitees: i0, chatId }: { topic: string; invite
   )
 }
 
+function RenameDialog({ chatId }: { chatId: string }) {
+  const { set, chats, renameChat } = useStore()
+  const chat = chats.find(c => c.chatId === chatId)
+  const [title, setTitle] = useState(chat?.title ?? '')
+  const save = async () => { set({ dialog: undefined }); await renameChat(chatId, title.trim()) }
+  return (
+    <div className="modal narrow" onClick={e => e.stopPropagation()}>
+      <h3><Pencil size={17} /> Название чата</h3>
+      <label className="field">Название<input autoFocus value={title} onChange={e => setTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && title.trim() && save()} /></label>
+      <div className="modal-actions">
+        <button className="ghost" onClick={() => set({ dialog: undefined })}>Отмена</button>
+        <button className="primary" disabled={!title.trim() || title.trim() === chat?.title} onClick={save}>Сохранить</button>
+      </div>
+    </div>
+  )
+}
+
+function DeleteChatDialog({ chatId, clear }: { chatId: string; clear?: boolean }) {
+  const { set, chats, nameOf, account, deleteChat, clearHistory } = useStore()
+  const chat = chats.find(c => c.chatId === chatId)
+  const [forAll, setForAll] = useState(false)
+  if (!chat) return null
+  const p2p = chat.chatType === CHAT_TYPE.P2P
+  const group = chat.chatType === CHAT_TYPE.GROUP
+  const peer = peerOf(chat, account?.trueconfId)
+  const title = p2p && peer ? nameOf(peer) : chat.title
+  const go = async () => { set({ dialog: undefined }); await (clear ? clearHistory : deleteChat)(chatId, forAll) }
+  return (
+    <div className="modal narrow" onClick={e => e.stopPropagation()}>
+      <h3>{clear ? <Eraser size={17} /> : <Trash2 size={17} />} {clear ? 'Очистить историю' : 'Удалить чат'} «{title}»?</h3>
+      <p className="muted">{clear ? 'Сообщения пропадут из чата. Отменить это нельзя.'
+        : group ? (forAll ? 'Чат и история пропадут у всех участников. Отменить это нельзя.' : 'Вы выйдете из группы, история у вас очистится.')
+        : 'История очистится, чат пропадёт из списка до нового сообщения.'}</p>
+      {chat.chatType !== CHAT_TYPE.FAVORITES && (
+        <label className="check"><input type="checkbox" checked={forAll} onChange={e => setForAll(e.target.checked)} />
+          {p2p ? `Также для ${peer ? nameOf(peer).split(' ').slice(0, 2).join(' ') : 'собеседника'}` : 'Для всех участников (нужны права владельца)'}</label>
+      )}
+      <div className="modal-actions">
+        <button className="ghost" onClick={() => set({ dialog: undefined })}>Отмена</button>
+        <button className="primary danger" onClick={go}>{clear ? 'Очистить' : group && !forAll ? 'Выйти и удалить' : 'Удалить'}</button>
+      </div>
+    </div>
+  )
+}
+
 export function Dialogs() {
   const { dialog, set } = useStore()
   if (!dialog) return null
   return (
     <div className="modal-bg" onMouseDown={() => set({ dialog: undefined })} onKeyDown={e => e.key === 'Escape' && set({ dialog: undefined })}>
       <div onMouseDown={e => e.stopPropagation()}>
-        {dialog.kind === 'newChat' ? <NewChatDialog /> : <CallDialog {...dialog} />}
+        {dialog.kind === 'newChat' ? <NewChatDialog />
+          : dialog.kind === 'rename' ? <RenameDialog chatId={dialog.chatId} />
+          : dialog.kind === 'deleteChat' ? <DeleteChatDialog chatId={dialog.chatId} clear={dialog.clear} />
+          : <CallDialog {...dialog} />}
       </div>
     </div>
   )

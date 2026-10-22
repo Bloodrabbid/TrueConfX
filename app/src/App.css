@@ -340,3 +340,11 @@ button.ghost.tiny { padding: 3px; }
 .meter-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
 .meter-bars i { width: 3px; height: 12px; border-radius: 1px; background: #3a3a40; transition: background .08s; }
 .meter-bars i.on { background: var(--ok); }
+
+/* Флажки в списке чатов: закреплён, без уведомлений, только упоминания */
+.row-flag { flex: none; color: var(--muted, #8a8a93); margin: 0 4px; opacity: .8; }
+.row-flag.pin { margin: 0 2px 0 auto; }
+.badge.quiet { background: #6b6f78; }
+.chat-head-main .title .muted { display: inline-flex; margin-left: 6px; vertical-align: middle; }
+.primary.danger { background: var(--danger); border-color: var(--danger); }
+.ctx-menu kbd { white-space: nowrap; }

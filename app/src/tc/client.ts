@@ -170,6 +170,9 @@ export class TCClient {
   createGroup(title: string) { return this.chat(CHAT.CREATE_GROUP, { title, isChannel: false }) }
   addParticipant(chatId: string, callId: string) { return this.chat(CHAT.ADD_PART, { chatId, callId }) }
   removeChat(chatId: string) { return this.chat(CHAT.REMOVE_CHAT, { chatId }) }
+  // Переименовать группу. Аватар меняется тем же запросом через avatarTemporalFileId.
+  renameChat(chatId: string, title: string) { return this.chat(9, { chatId, title }) }
+  clearHistory(chatId: string, forAll: boolean) { return this.chat(18, { chatId, forAll }) }
   chatInfo(chatId: string) { return this.chat(CHAT.INFO, { chatId }) }
   // Участники чата: [{ name: 'user@host', type, role: 'owner' | 'admin' | 'user' }]
   async members(chatId: string): Promise<ChatMember[]> {

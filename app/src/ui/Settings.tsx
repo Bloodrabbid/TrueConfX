@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { useStore } from '../store'
+import { useStore, type NotifyLevel } from '../store'
 
 export function Settings() {
-  const { devices, set, account, server, client, conference, logout } = useStore()
+  const { devices, set, account, server, client, conference, logout, notifyPrefs, setNotifyPrefs } = useStore()
   const [list, setList] = useState<MediaDeviceInfo[]>([])
   const [level, setLevel] = useState(0)
   const [status, setStatus] = useState('')
@@ -50,6 +50,22 @@ export function Settings() {
         </div>
         <div className="invite"><input placeholder="Текстовый статус: «на встрече до 15:00»" value={status} onChange={e => setStatus(e.target.value)} />
           <button className="primary small" onClick={() => client?.setStatusText(status)}>Сохранить</button></div>
+      </div>
+      <div className="card">
+        <h3>Уведомления</h3>
+        {([['private', 'Личные чаты'], ['group', 'Группы']] as const).map(([k, label]) => (
+          <label key={k}>{label}
+            <select value={notifyPrefs[k]} onChange={e => setNotifyPrefs({ [k]: e.target.value as NotifyLevel })}>
+              <option value="all">Все сообщения</option>
+              <option value="mentions">Только упоминания</option>
+              <option value="off">Без уведомлений</option>
+            </select>
+          </label>
+        ))}
+        <p className="muted small">Для отдельного чата уровень меняется правым кликом по чату в списке или кнопкой «⋮» в его шапке.</p>
+        <label className="check"><input type="checkbox" checked={notifyPrefs.attention} onChange={e => setNotifyPrefs({ attention: e.target.checked })} />
+          {window.native?.platform === 'darwin' ? 'Подпрыгивать значком в доке' : 'Мигать окном на панели задач'}, когда окно не в фокусе</label>
+        <label className="check"><input type="checkbox" checked={notifyPrefs.preview} onChange={e => setNotifyPrefs({ preview: e.target.checked })} />Показывать текст сообщения в уведомлении</label>
       </div>
       <div className="card">
         <h3>Звук и видео</h3>

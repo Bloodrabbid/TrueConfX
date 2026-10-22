@@ -9,6 +9,8 @@ export type Tab = 'chats' | 'contacts' | 'meet' | 'settings'
 export type Dialog =
   | { kind: 'newChat' }
   | { kind: 'call'; topic: string; invitees: string[]; chatId?: string }
+  | { kind: 'rename'; chatId: string }
+  | { kind: 'deleteChat'; chatId: string; clear?: boolean }
 
 interface State {
   client?: TCClient
@@ -24,6 +26,12 @@ interface State {
   activeChatId?: string
   messages: Record<string, ServerMessage[]>
   unread: Record<string, number>
+  // Сколько сообщений прошло фильтр уведомлений — это число на значке приложения.
+  alerts: Record<string, number>
+  notifyPrefs: NotifyPrefs
+  setNotifyPrefs: (p: Partial<NotifyPrefs>) => void
+  setChatNotify: (chatId: string, level?: NotifyLevel) => void
+  levelOf: (chat: ServerChat) => NotifyLevel
   contacts: Contact[]
   presence: Record<string, Presence>
   names: Record<string, string>
@@ -58,11 +66,19 @@ interface State {
   addMembers: (chatId: string, ids: string[]) => Promise<void>
   kickMember: (chatId: string, id: string) => Promise<void>
   leaveChat: (chatId: string) => Promise<void>
+  pins: string[]
+  togglePin: (chatId: string) => void
+  renameChat: (chatId: string, title: string) => Promise<void>
+  deleteChat: (chatId: string, forAll: boolean) => Promise<void>
+  clearHistory: (chatId: string, forAll: boolean) => Promise<void>
   leave: () => void
   nameOf: (id: string) => string
   resolveNames: (ids: string[]) => void
   notify: (text: string) => void
 }
+
+export type NotifyLevel = 'all' | 'mentions' | 'off'
+export interface NotifyPrefs { private: NotifyLevel; group: NotifyLevel; attention: boolean; preview: boolean; chats: Record<string, NotifyLevel> }
 
 const pendingNames = new Set<string>()
 // Конференции, которые мы создали для созвона и должны прибрать за собой.
@@ -70,6 +86,9 @@ const adHoc = new Set<string>()
 const saved = JSON.parse(localStorage.getItem('tcx.prefs') ?? '{}')
 // Созвон из чата: сервер заводит конференции отдельный чат. Запоминаем, из какого чата
 // начали созвон, прячем чат конференции и переписку в звонке ведём в исходном чате.
+// Удалённые личные чаты: сервер их не удаляет, прячем до нового сообщения.
+const hidden = new Set<string>(JSON.parse(localStorage.getItem('tcx.hidden') ?? '[]'))
+export const isHidden = (chatId: string) => hidden.has(chatId)
 const confLinks: Record<string, string> = JSON.parse(localStorage.getItem('tcx.confLinks') ?? '{}')
 export const linkedChatOf = (c: ServerChat) => (c.conferenceId ? confLinks[String(c.conferenceId).split('@')[0]] : undefined)
 export const callChatOf = (conferenceId: string, chatId: string) => confLinks[conferenceId.split('@')[0]] ?? chatId
@@ -87,6 +106,19 @@ export const useStore = create<State>((set, get) => ({
   members: {},
   showMembers: false,
   unread: {},
+  alerts: {},
+  notifyPrefs: { private: 'all', group: 'all', attention: true, preview: true, chats: {}, ...JSON.parse(localStorage.getItem('tcx.notify') ?? '{}') },
+  setNotifyPrefs: p => {
+    const notifyPrefs = { ...get().notifyPrefs, ...p }
+    localStorage.setItem('tcx.notify', JSON.stringify(notifyPrefs))
+    set({ notifyPrefs })
+  },
+  setChatNotify: (chatId, level) => {
+    const chats = { ...get().notifyPrefs.chats }
+    if (level) chats[chatId] = level; else delete chats[chatId]
+    get().setNotifyPrefs({ chats })
+  },
+  levelOf: chat => get().notifyPrefs.chats[chat.chatId] ?? (chat.chatType === CHAT_TYPE.P2P ? get().notifyPrefs.private : get().notifyPrefs.group),
   contacts: [],
   presence: {},
   names: JSON.parse(localStorage.getItem('tcx.names') ?? '{}'),
@@ -142,7 +174,7 @@ export const useStore = create<State>((set, get) => ({
       wireClient(client)
       client.requestContacts()
       const chats = await client.chatList()
-      set({ chats: sortChats(chats) })
+      set({ chats: sortChats(chats.filter(c => !hidden.has(c.chatId))) })
       get().resolveNames(chats.flatMap(c => [c.lastVisibleMessage?.sender ?? '', c.chatType === CHAT_TYPE.P2P ? peerOf(c, account.trueconfId) ?? '' : '']))
       const link = await window.native?.takeLink?.()
       if (link) handleLink(link)
@@ -298,6 +330,39 @@ export const useStore = create<State>((set, get) => ({
     await get().loadMembers(chatId)
   },
 
+  // Закрепление только локальное: в протоколе TrueConf его нет.
+  pins: JSON.parse(localStorage.getItem('tcx.pins') ?? '[]'),
+  togglePin: chatId => {
+    const pins = get().pins.includes(chatId) ? get().pins.filter(id => id !== chatId) : [chatId, ...get().pins]
+    localStorage.setItem('tcx.pins', JSON.stringify(pins))
+    set({ pins })
+  },
+  renameChat: async (chatId, title) => {
+    await get().client?.renameChat(chatId, title).then(
+      () => set({ chats: get().chats.map(c => (c.chatId === chatId ? { ...c, title } : c)) }),
+      e => get().notify(`Не удалось переименовать: ${e.message}`))
+  },
+  // Сервер 5.5 игнорирует флаг removeChat у CLEAR_CHAT_HISTORY, поэтому как в Telegram:
+  // группу у всех — REMOVE_CHAT, у себя — очистить и выйти; личный — очистить и скрыть до нового сообщения.
+  deleteChat: async (chatId, forAll) => {
+    const client = get().client, chat = get().chats.find(c => c.chatId === chatId)
+    if (!client || !chat) return
+    const run = chat.chatType === CHAT_TYPE.GROUP
+      ? (forAll ? client.removeChat(chatId) : client.clearHistory(chatId, false).then(() => client.leaveChat(chatId)))
+      : client.clearHistory(chatId, forAll).then(() => { hidden.add(chatId); localStorage.setItem('tcx.hidden', JSON.stringify([...hidden])) })
+    await run.then(() => {
+      const { messages, unread } = get()
+      set({ chats: get().chats.filter(c => c.chatId !== chatId), messages: { ...messages, [chatId]: [] }, unread: { ...unread, [chatId]: 0 },
+        activeChatId: get().activeChatId === chatId ? undefined : get().activeChatId, showMembers: false })
+      if (get().pins.includes(chatId)) get().togglePin(chatId)
+    }, e => get().notify(`Не удалось удалить: ${e.message}`))
+  },
+  clearHistory: async (chatId, forAll) => {
+    await get().client?.clearHistory(chatId, forAll).then(
+      () => set({ messages: { ...get().messages, [chatId]: [] } }),
+      e => get().notify(`Не удалось очистить: ${e.message}`))
+  },
+
   leaveChat: async chatId => {
     await get().client?.leaveChat(chatId).then(() => {
       set({ chats: get().chats.filter(c => c.chatId !== chatId), activeChatId: undefined, showMembers: false })
@@ -394,6 +459,13 @@ function wireClient(client: TCClient) {
       if (!info?.chatId) return
       st.setState({ chats: sortChats([info, ...st.getState().chats]) })
     }
+    // Чат переименовали — подтягиваем новое название.
+    // chatInfo отдаёт старое название, новое есть только в самом системном сообщении.
+    if (m.type === 103 && m.content?.title) st.setState({ chats: st.getState().chats.map(c => (c.chatId === m.chatId ? { ...c, title: m.content.title } : c)) })
+    if (hidden.delete(m.chatId)) {
+      localStorage.setItem('tcx.hidden', JSON.stringify([...hidden]))
+      if (!st.getState().chats.some(c => c.chatId === m.chatId)) { const info = await client.chatInfo(m.chatId).catch(() => null); if (info?.chatId) st.setState({ chats: sortChats([info, ...st.getState().chats]) }) }
+    }
     pushMessage(m)
     s.resolveNames([m.sender])
     const mine = m.sender === s.account?.trueconfId
@@ -402,7 +474,16 @@ function wireClient(client: TCClient) {
     if (s.activeChatId === m.chatId && s.tab === 'chats' && document.hasFocus()) client.markRead(m.chatId, m.messageId)
     else {
       st.setState({ unread: { ...st.getState().unread, [m.chatId]: (st.getState().unread[m.chatId] ?? 0) + 1 } })
-      window.native?.notify(s.nameOf(m.sender), plainText(messageText(m)))
+      // Как в Telegram: у чата уровень «все», «только упоминания» или «без уведомлений».
+      const level = chat ? s.levelOf(chat) : 'all'
+      const mentioned = messageText(m).includes(`trueconf:${s.account?.trueconfId}`)
+      if (level === 'off' || (level === 'mentions' && !mentioned)) return
+      st.setState({ alerts: { ...st.getState().alerts, [m.chatId]: (st.getState().alerts[m.chatId] ?? 0) + 1 } })
+      const who = s.nameOf(m.sender)
+      const title = chat && chat.chatType !== CHAT_TYPE.P2P ? `${chat.title}` : who
+      const text = !s.notifyPrefs.preview ? 'Новое сообщение' : `${chat && chat.chatType !== CHAT_TYPE.P2P ? `${who.split(' ').slice(0, 2).join(' ')}: ` : ''}${plainText(messageText(m)) || 'Файл'}`
+      window.native?.notify(title, text, { chatId: m.chatId })
+      if (s.notifyPrefs.attention) window.native?.attention?.()
     }
   })
   client.on('messageEdited', m => {
@@ -440,6 +521,18 @@ window.native?.onDeepLink?.(handleLink)
 
 // Для отладки из DevTools: __tcx.getState()
 ;(window as any).__tcx = Object.assign(useStore, { TCClient, Conference })
+
+// Прочитанный чат больше не считается на значке; число на значке — сумма по чатам.
+let lastBadge = -1
+useStore.subscribe(s => {
+  let changed = false
+  const alerts = { ...s.alerts }
+  for (const id of Object.keys(alerts)) if (!s.unread[id]) { delete alerts[id]; changed = true }
+  if (changed) { useStore.setState({ alerts }); return }
+  const total = Object.values(s.alerts).reduce((a, b) => a + b, 0)
+  if (total !== lastBadge) { lastBadge = total; window.native?.setBadge?.(total) }
+})
+window.native?.onOpenChat?.(id => useStore.getState().openChat(id))
 
 // Вернулись в окно с открытым чатом — он прочитан.
 window.addEventListener('focus', () => {

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus } from 'lucide-react'
-import { useStore, peerOf, linkedChatOf } from '../store'
+import { Search, Send, Video, Users, Star, PhoneMissed, MessageSquare, Reply, Quote, Forward, Copy, Pencil, Trash2, X, CornerUpRight, Link, Download, ChevronDown, Plus, Pin, PinOff, Bell, BellOff, AtSign, Eraser, MoreVertical } from 'lucide-react'
+import { useStore, peerOf, linkedChatOf, type NotifyLevel } from '../store'
 import { CHAT_TYPE, messageText, systemText, isSystem, MSG, type ServerChat, type ServerMessage } from '../tc/client'
 import { Avatar, formatTime, dayLabel, PRESENCE_LABEL } from './common'
 import { RichText, plainText, toPlain } from './RichText'
@@ -28,13 +28,43 @@ function previewOf(c: ServerChat, last: ServerMessage | undefined, nameOf: (id: 
   return who + plainText(messageText(last))
 }
 
+const LEVEL_LABEL: Record<NotifyLevel, string> = { all: 'Все сообщения', mentions: 'Только упоминания', off: 'Без уведомлений' }
+
+// Действия над чатом: одно меню и в списке (правый клик), и в шапке чата (кнопка «⋮»).
+function chatActions(chat: ServerChat): Action[] {
+  const s = useStore.getState()
+  const pinned = s.pins.includes(chat.chatId)
+  const level = s.levelOf(chat)
+  const own = s.notifyPrefs.chats[chat.chatId]
+  const levels: [NotifyLevel, typeof Bell][] = [['all', Bell], ['mentions', AtSign], ['off', BellOff]]
+  const list: Action[] = [
+    { key: 'pin', label: pinned ? 'Открепить' : 'Закрепить', icon: pinned ? PinOff : Pin, run: () => s.togglePin(chat.chatId) },
+    ...levels.map(([l, icon], i): Action => ({
+      key: `n-${l}`, label: LEVEL_LABEL[l], icon, sep: i === 0, hint: level === l ? (own ? '✓' : '✓ по умолч.') : undefined,
+      // Повторный выбор уровня по умолчанию снимает личную настройку чата.
+      run: () => s.setChatNotify(chat.chatId, own === l ? undefined : l),
+    })),
+  ]
+  if (chat.chatType === CHAT_TYPE.GROUP) list.push({ key: 'rename', label: 'Переименовать', icon: Pencil, sep: true, run: () => s.set({ dialog: { kind: 'rename', chatId: chat.chatId } }) })
+  list.push(
+    { key: 'clear', label: 'Очистить историю', icon: Eraser, sep: chat.chatType !== CHAT_TYPE.GROUP, run: () => s.set({ dialog: { kind: 'deleteChat', chatId: chat.chatId, clear: true } }) },
+    { key: 'delete', label: 'Удалить чат', icon: Trash2, danger: true, run: () => s.set({ dialog: { kind: 'deleteChat', chatId: chat.chatId } }) },
+  )
+  return list
+}
+
 export function ChatList() {
-  const { chats, activeChatId, openChat, nameOf, account, unread, presence } = useStore()
+  const { chats, activeChatId, openChat, nameOf, account, unread, presence, pins, levelOf } = useStore()
+  useStore(s => s.notifyPrefs)
   const [q, setQ] = useState('')
+  const [menu, setMenu] = useState<MenuState | null>(null)
   const list = useMemo(() => {
     const s = q.toLowerCase()
-    return chats.filter(c => !linkedChatOf(c)).filter(c => !s || chatTitle(c, nameOf, account?.trueconfId).toLowerCase().includes(s))
-  }, [chats, q, nameOf, account])
+    const found = chats.filter(c => !linkedChatOf(c)).filter(c => !s || chatTitle(c, nameOf, account?.trueconfId).toLowerCase().includes(s))
+    // Закреплённые — сверху, в порядке закрепления.
+    const rank = (c: ServerChat) => { const i = pins.indexOf(c.chatId); return i < 0 ? Infinity : i }
+    return found.map((c, i) => [c, i] as const).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([c]) => c)
+  }, [chats, q, nameOf, account, pins])
 
   return (
     <div className="list-pane">
@@ -46,17 +76,19 @@ export function ChatList() {
           const peer = peerOf(c, account?.trueconfId)
           const last = c.lastVisibleMessage
           const n = unread[c.chatId] ?? c.unreadMessages ?? 0
+          const level = levelOf(c)
           return (
-            <button key={c.chatId} className={`row ${c.chatId === activeChatId ? 'active' : ''}`} onClick={() => openChat(c.chatId)}>
+            <button key={c.chatId} className={`row ${c.chatId === activeChatId ? 'active' : ''}`} onClick={() => openChat(c.chatId)}
+              onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: chatActions(c) }) }}>
               {c.chatType === CHAT_TYPE.FAVORITES ? <div className="avatar icon"><Star size={18} /></div>
                 : c.chatType === CHAT_TYPE.MISSED_CALLS ? <div className="avatar icon"><PhoneMissed size={18} /></div>
                 : c.chatType === CHAT_TYPE.GROUP ? <div className="avatar icon group"><Users size={18} /></div>
                 : <Avatar name={title} id={peer ?? c.chatId} presence={peer ? presence[peer] : undefined} />}
               <div className="row-main">
-                <div className="row-top"><span className="title">{title}</span><span className="time">{formatTime(last?.timestamp)}</span></div>
+                <div className="row-top"><span className="title">{title}</span>{level !== 'all' && (level === 'off' ? <BellOff size={13} className="row-flag" /> : <AtSign size={13} className="row-flag" />)}<span className="time">{formatTime(last?.timestamp)}</span></div>
                 <div className="row-bottom">
                   <span className="preview">{previewOf(c, last, nameOf, account?.trueconfId)}</span>
-                  {n > 0 && <span className="badge">{n}</span>}
+                  {n > 0 ? <span className={`badge ${level !== 'all' ? 'quiet' : ''}`}>{n}</span> : pins.includes(c.chatId) && <Pin size={13} className="row-flag pin" />}
                 </div>
               </div>
             </button>
@@ -64,6 +96,7 @@ export function ChatList() {
         })}
         {!list.length && <div className="empty">Чатов нет</div>}
       </div>
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   )
 }
@@ -221,6 +254,9 @@ export function ChatView() {
   const list = activeChatId ? messages[activeChatId] ?? [] : []
   const text = activeChatId ? draft[activeChatId] ?? '' : ''
   const setText = (t: string) => activeChatId && set({ draft: { ...useStore.getState().draft, [activeChatId]: t } })
+  const [chatMenu, setChatMenu] = useState<MenuState | null>(null)
+  const notifyPrefs = useStore(s => s.notifyPrefs)
+  const level: NotifyLevel = chat ? notifyPrefs.chats[chat.chatId] ?? useStore.getState().levelOf(chat) : 'all'
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   const atBottom = useRef(true)
@@ -303,12 +339,14 @@ export function ChatView() {
       <div className="chat-head">
         <Avatar name={title} id={peer ?? chat.chatId} size={36} />
         <div className="chat-head-main">
-          <div className="title">{title}</div>
+          <div className="title">{title}{level !== 'all' && <span className="muted" title={LEVEL_LABEL[level]}>{level === 'off' ? <BellOff size={13} /> : <AtSign size={13} />}</span>}</div>
           {peer ? <div className="muted small">{PRESENCE_LABEL[presence[peer] ?? 'offline']}</div>
             : <button className="muted small link-like" onClick={() => set({ showMembers: !showMembers })}>{memberCount ? plural(memberCount, 'участник', 'участника', 'участников') : 'Групповой чат'}</button>}
         </div>
         {chat.chatType === CHAT_TYPE.GROUP && <button className={`ghost ${showMembers ? 'on' : ''}`} title="Участники" onClick={() => set({ showMembers: !showMembers })}><Users size={18} /></button>}
         <button className="ghost" title={chat.chatType === CHAT_TYPE.GROUP ? 'Созвон с участниками чата' : 'Позвонить'} onClick={() => openCall(chat)}><Video size={18} /></button>
+        <button className="ghost" title="Действия с чатом" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setChatMenu({ x: r.right - 220, y: r.bottom + 4, items: chatActions(chat) }) }}><MoreVertical size={18} /></button>
+        {chatMenu && <ContextMenu menu={chatMenu} onClose={() => setChatMenu(null)} />}
       </div>
       <div className="messages" ref={scroller} onScroll={e => {
         const el = e.currentTarget

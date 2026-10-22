@@ -50,6 +50,7 @@ function createWindow() {
   })
   if (DEV_URL) win.loadURL(DEV_URL)
   else win.loadFile(path.join(__dirname, '../dist/index.html'))
+  win.on('focus', () => win.flashFrame(false))
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
 }
 
@@ -85,7 +86,23 @@ app.whenReady().then(() => {
     })
     win.webContents.downloadURL(url)
   })
-  ipcMain.handle('notify', (_e, { title, body }) => { new Notification({ title, body }).show() })
+  ipcMain.handle('notify', (_e, { title, body, chatId, silent }) => {
+    const n = new Notification({ title, body, silent: !!silent })
+    // Клик по уведомлению — открываем окно и нужный чат.
+    n.on('click', () => { if (!win) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (chatId) win.webContents.send('open-chat', chatId) })
+    n.show()
+  })
+  // Счётчик непрочитанного на значке: в доке macOS и в Linux (Unity), на Windows — в заголовке окна.
+  ipcMain.handle('badge', (_e, count) => {
+    app.setBadgeCount(count)
+    if (process.platform === 'win32' && win) win.setTitle(count ? `(${count}) TrueConfX` : 'TrueConfX')
+  })
+  // Новое сообщение, пока окно не в фокусе: значок подпрыгивает, окно мигает на панели задач.
+  ipcMain.handle('attention', () => {
+    if (!win || win.isFocused()) return
+    if (process.platform === 'darwin') app.dock?.bounce('informational')
+    else win.flashFrame(true)
+  })
   // Логин и пароль храним зашифрованными системным хранилищем ключей (Keychain/DPAPI/libsecret).
   const credFile = path.join(app.getPath('userData'), 'credentials.bin')
   ipcMain.handle('save-credentials', (_e, server, login, password) => {
