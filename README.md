@@ -25,7 +25,22 @@
 ## Скачать
 
 Готовые установщики — на странице [Releases](https://github.com/Bloodrabbid/TrueConfX/releases):
-`.dmg` (macOS, Apple Silicon и Intel), `.exe` (Windows), `.AppImage` и `.deb` (Linux).
+`.dmg` (macOS, Apple Silicon и Intel), `.exe` (Windows), `.AppImage`, `.deb` и `.pkg.tar.zst` для Arch (Linux).
+
+**macOS через Homebrew:**
+
+```sh
+brew tap bloodrabbid/trueconfx https://github.com/Bloodrabbid/TrueConfX
+brew install --cask trueconfx
+```
+
+**Arch Linux:** в релизе есть родной пакет `trueconfx-bin-*.pkg.tar.zst`:
+
+```sh
+sudo pacman -U trueconfx-bin-*-x86_64.pkg.tar.zst
+```
+
+Или собрать самому по [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD): `makepkg -si` в папке с ним.
 
 Пакеты не подписаны. На macOS при первом запуске: правый клик по приложению → «Открыть»,
 или `xattr -dr com.apple.quarantine /Applications/TrueConfX.app`.

@@ -1,0 +1,26 @@
+# Maintainer: Bloodrabbid <Bloodrabbid@users.noreply.github.com>
+# Пакет собирается из .deb релиза: внутри уже готовое Electron-приложение.
+pkgname=trueconfx-bin
+pkgver=0.2.3
+pkgrel=1
+pkgdesc='Неофициальный современный клиент для TrueConf Server'
+arch=('x86_64')
+url='https://github.com/Bloodrabbid/TrueConfX'
+license=('custom')
+depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst' 'libnotify' 'libsecret' 'xdg-utils' 'at-spi2-core' 'util-linux-libs')
+optdepends=('libappindicator-gtk3: значок в трее')
+provides=('trueconfx')
+conflicts=('trueconfx')
+options=('!strip' '!debug')
+source=("TrueConfX-${pkgver}.deb::${url}/releases/download/v${pkgver}/TrueConfX-${pkgver}-linux-amd64.deb")
+sha256sums=('f395b4a2011c7b1d97de1cfcedbf51a2e720636cad6d4f1d6bb7d8ac29f2ded6')
+noextract=("TrueConfX-${pkgver}.deb")
+
+package() {
+  bsdtar -xOf "TrueConfX-${pkgver}.deb" 'data.tar.*' | bsdtar -xf - -C "$pkgdir"
+  rm -rf "$pkgdir/usr/share/doc"
+  install -d "$pkgdir/usr/bin"
+  ln -s /opt/TrueConfX/trueconfx "$pkgdir/usr/bin/trueconfx"
+  # Песочница Chromium нужна на ядрах без user namespaces (например, linux-hardened).
+  chmod 4755 "$pkgdir/opt/TrueConfX/chrome-sandbox"
+}
