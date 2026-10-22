@@ -74,6 +74,8 @@ jobs:
           pacman -Syu --noconfirm --needed base-devel
           ver=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' app/package.json | head -1)
           packaging/update-recipes.sh "$ver" dist
+          # Ставим зависимости из PKGBUILD: заодно проверяем, что такие пакеты есть в Arch.
+          (source packaging/arch/PKGBUILD && pacman -S --noconfirm --needed "${depends[@]}")
           useradd -m builder
           mkdir /build && cp packaging/arch/PKGBUILD /build/
           cp "dist/TrueConfX-$ver-linux-amd64.deb" "/build/TrueConfX-$ver.deb"
