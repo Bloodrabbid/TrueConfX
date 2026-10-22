@@ -1,7 +1,7 @@
 # Maintainer: Bloodrabbid <Bloodrabbid@users.noreply.github.com>
 # Пакет собирается из .deb релиза: внутри уже готовое Electron-приложение.
 pkgname=trueconfx-bin
-pkgver=0.2.6
+pkgver=0.2.7
 pkgrel=1
 pkgdesc='Unofficial modern client for TrueConf Server'
 arch=('x86_64')
@@ -13,7 +13,7 @@ provides=('trueconfx')
 conflicts=('trueconfx')
 options=('!strip' '!debug')
 source=("TrueConfX-${pkgver}.deb::${url}/releases/download/v${pkgver}/TrueConfX-${pkgver}-linux-amd64.deb")
-sha256sums=('a286cdde425ec459ba0bce4982a0f415b9fe359ed24abc7d716bae978cfd269c')
+sha256sums=('1545b34d8497aafd892df2cea2e64bb07fccbf6dfd990d8e516d6ea500a236c8')
 noextract=("TrueConfX-${pkgver}.deb")
 
 package() {
