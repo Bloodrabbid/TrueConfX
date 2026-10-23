@@ -87,6 +87,14 @@ export interface NotifyPrefs { private: NotifyLevel; group: NotifyLevel; attenti
 const pendingNames = new Set<string>()
 // Чаты, история которых уже загружена с сервера в этой сессии.
 const historyLoaded = new Set<string>()
+// Чаты, для которых прямо сейчас грузится ранняя история — чтобы скролл вверх
+// не запускал подгрузку десять раз подряд и не плодил копии одного и того же куска.
+const loadingOlder = new Set<string>()
+// Склейка списков сообщений с дедупом по messageId: первое вхождение остаётся.
+function dedupById(list: ServerMessage[]) {
+  const seen = new Set<string>()
+  return list.filter(m => (seen.has(m.messageId) ? false : (seen.add(m.messageId), true)))
+}
 // Конференции, которые мы создали для созвона и должны прибрать за собой.
 const adHoc = new Set<string>()
 const saved = JSON.parse(localStorage.getItem('tcx.prefs') ?? '{}')
@@ -210,7 +218,7 @@ export const useStore = create<State>((set, get) => ({
       const list = await client.history(chatId, 60)
       const live = (get().messages[chatId] ?? []).filter(m => !list.some(x => x.messageId === m.messageId))
       historyLoaded.add(chatId)
-      set({ messages: { ...get().messages, [chatId]: sortByTime([...list, ...live]) } })
+      set({ messages: { ...get().messages, [chatId]: sortByTime(dedupById([...list, ...live])) } })
       get().resolveNames(list.map(m => m.sender))
     }
     const last = get().messages[chatId]?.at(-1)
@@ -231,11 +239,17 @@ export const useStore = create<State>((set, get) => ({
   loadOlder: async chatId => {
     const { client, messages } = get()
     const first = messages[chatId]?.[0]
-    if (!client || !first) return
-    const older = await client.history(chatId, 60, first.messageId)
-    get().resolveNames(older.map(m => m.sender))
-    const known = new Set(messages[chatId].map(m => m.messageId))
-    set({ messages: { ...get().messages, [chatId]: sortByTime([...older.filter(m => !known.has(m.messageId)), ...get().messages[chatId]]) } })
+    // Уже грузим раннюю историю этого чата — второй заход не плодим.
+    if (!client || !first || loadingOlder.has(chatId)) return
+    loadingOlder.add(chatId)
+    try {
+      const older = await client.history(chatId, 60, first.messageId)
+      get().resolveNames(older.map(m => m.sender))
+      // Склейка с дедупом по актуальному списку (не по снимку на входе) — гонка не даст копий.
+      set({ messages: { ...get().messages, [chatId]: sortByTime(dedupById([...older, ...get().messages[chatId]])) } })
+    } finally {
+      loadingOlder.delete(chatId)
+    }
   },
 
   sendFiles: async (files, onProgress) => {
