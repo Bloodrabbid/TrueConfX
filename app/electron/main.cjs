@@ -2,6 +2,7 @@
 const { app, BrowserWindow, session, desktopCapturer, shell, Notification, ipcMain, safeStorage, nativeImage } = require('electron')
 const fs = require('fs')
 const path = require('path')
+const p2p = require('./p2p.cjs')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
 // Отладка через Chrome DevTools Protocol: TCX_DEBUG=9229 npx electron .
@@ -85,6 +86,13 @@ app.whenReady().then(() => {
       })
     })
     win.webContents.downloadURL(url)
+  })
+  // Файл, который лежит у отправителя: качаем сами по порту 4307 (см. p2p.cjs).
+  ipcMain.handle('p2p-fetch', async (e, hosts, hash) => {
+    try {
+      const data = await p2p.fetchFile(hosts, hash, (got, total) => e.sender.send('p2p-progress', { hash, got, total }))
+      return { ok: true, data }
+    } catch (err) { return { ok: false, error: err.message } }
   })
   ipcMain.handle('notify', (_e, { title, body, chatId, silent }) => {
     const n = new Notification({ title, body, silent: !!silent })

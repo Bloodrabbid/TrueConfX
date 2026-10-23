@@ -376,3 +376,8 @@ button.ghost.tiny { padding: 3px; }
 .read-mark { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--muted); cursor: default; }
 .read-mark.read { color: var(--accent); }
 .offline-bar { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 50; background: var(--warn); color: #1b1b1f; font-size: 12px; padding: 4px 14px; border-radius: 0 0 8px 8px; }
+
+/* Превью, пока оригинал у отправителя: размытая миниатюра с подписью поверх. */
+.att-image { position: relative; }
+.att-preview { filter: blur(2px); transform: scale(1.04); }
+.att-image .att-preview + .att-progress { position: absolute; left: 8px; bottom: 8px; padding: 3px 8px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; }

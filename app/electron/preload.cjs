@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('native', {
   saveCredentials: (server, login, password) => ipcRenderer.invoke('save-credentials', server, login, password),
   loadCredentials: () => ipcRenderer.invoke('load-credentials'),
   download: (url, name) => ipcRenderer.invoke('download', url, name),
+  p2pFetch: (hosts, hash) => ipcRenderer.invoke('p2p-fetch', hosts, hash),
+  onP2PProgress: cb => listen('p2p-progress', cb),
   takeLink: () => ipcRenderer.invoke('take-link'),
   onDeepLink: cb => listen('deep-link', cb),
   onPickScreen: cb => listen('pick-screen', cb),

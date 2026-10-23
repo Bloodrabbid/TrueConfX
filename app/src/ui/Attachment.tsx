@@ -21,44 +21,76 @@ function iconFor(mime = '', name = '') {
   return FileText
 }
 
+// Файл у отправителя качаем сами по порту 4307 (Electron). Один запрос на файл, результат живёт, пока открыто приложение.
+const p2pLoads = new Map<string, Promise<string | undefined>>()
+function p2pLoad(hash: string, hosts: string[], mime: string): Promise<string | undefined> {
+  if (!window.native?.p2pFetch) return Promise.resolve(undefined)
+  let p = p2pLoads.get(hash)
+  if (!p) {
+    p = window.native.p2pFetch(hosts, hash).then(r => {
+      if (r.ok) return URL.createObjectURL(new Blob([r.data as BlobPart], { type: mime }))
+      p2pLoads.delete(hash) // не вышло — следующая проверка попробует снова
+      return undefined
+    })
+    p2pLoads.set(hash, p)
+  }
+  return p
+}
+
 type FileState = { kind: 'loading' } | { kind: 'ready'; url: string } | { kind: 'fetching'; percent: number } | { kind: 'missing' }
 
-function useFile(hash: string | undefined, size: number) {
+function useFile(hash: string | undefined, size: number, mime: string, sender: string) {
   const client = useStore(s => s.client)
   const [state, setState] = useState<FileState>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
+  // Превью сервер отдаёт и тогда, когда сам файл ещё у отправителя.
+  const [preview, setPreview] = useState<string>()
 
   useEffect(() => {
     if (!hash || !client) return
-    let alive = true, watching = false
+    let alive = true, watching = false, done = false
+    const ready = (url: string) => { done = true; setState({ kind: 'ready', url }) }
+    // Файл у отправителя: сервер отправителя отдаёт его по порту 4307, но только после того,
+    // как какой-нибудь клиент TrueConf «поднял» его запросом по закрытому каналу. Поэтому проверяем часто и дёшево.
+    const tryP2P = () => {
+      if (done) return
+      const hosts = [sender.split('@')[1]?.split('/')[0], client.host]
+      const off = window.native?.onP2PProgress?.(p => { if (alive && !done && p.hash === hash && p.total) setState({ kind: 'fetching', percent: Math.floor((100 * p.got) / p.total) }) })
+      p2pLoad(hash, hosts, mime).then(url => { off?.(); if (alive && !done && url) ready(url) })
+    }
     const load = async () => {
       const e = await client.fileInfo(hash)
-      if (!alive) return
+      if (!alive || done) return
       if (!e) return setState({ kind: 'missing' })
-      if (e.readyState === 2) return setState({ kind: 'ready', url: e.downloadUrl })
+      setPreview(e.previews?.[0]?.downloadUrl)
+      if (e.readyState === 2) return ready(e.downloadUrl)
+      if (watching) return
       watching = true
       const ok = await client.watchUpload(hash, bytes => {
         // Сервер иногда шлёт мусорное число вместо прогресса — такое пропускаем.
         if (!alive || !Number.isFinite(bytes) || bytes > size * 2) return
-        if (bytes >= size) { client.forgetFile(hash); load() } else setState({ kind: 'fetching', percent: Math.floor((100 * bytes) / size) })
+        if (bytes >= size) { client.forgetFile(hash); watching = false; load() } else setState({ kind: 'fetching', percent: Math.floor((100 * bytes) / size) })
       })
-      if (alive) setState(st => (!ok ? { kind: 'missing' } : st.kind === 'loading' ? { kind: 'fetching', percent: 0 } : st))
+      if (alive && !done) setState(st => (!ok ? { kind: 'missing' } : st.kind === 'loading' ? { kind: 'fetching', percent: 0 } : st))
     }
     load()
-    return () => { alive = false; if (watching) client.unwatchUpload(hash) }
-  }, [hash, client, size, attempt])
+    tryP2P()
+    const p2pTimer = setInterval(tryP2P, 5_000)
+    const infoTimer = setInterval(() => { if (alive && !done) { client.forgetFile(hash); load() } }, 30_000)
+    return () => { alive = false; clearInterval(p2pTimer); clearInterval(infoTimer); if (watching) client.unwatchUpload(hash) }
+  }, [hash, client, size, mime, sender, attempt])
 
   // Ссылка с токеном могла протухнуть — один раз запрашиваем новую.
   const retry = () => { if (hash && client && attempt < 1) { client.forgetFile(hash); setAttempt(a => a + 1) } else setState({ kind: 'missing' }) }
   // Ручной повтор: отправитель мог появиться в сети и снова раздавать файл.
   const again = () => { if (hash && client) { client.forgetFile(hash); setState({ kind: 'loading' }); setAttempt(a => a + 1) } }
-  return { state, retry, again }
+  return { state, preview, retry, again }
 }
 
 export function Attachment({ m }: { m: ServerMessage }) {
   const c = m.content ?? {}
   const size: number = c.file_size ?? 0
-  const { state, retry, again } = useFile(c.hash, size)
+  const { state, preview, retry, again } = useFile(c.hash, size, c.file_type ?? '', String(c.from_instance ?? m.sender))
   const nameOf = useStore(s => s.nameOf)
   const [zoom, setZoom] = useState(false)
   const mime: string = c.file_type ?? ''
@@ -66,13 +98,14 @@ export function Attachment({ m }: { m: ServerMessage }) {
   const url = state.kind === 'ready' ? state.url : undefined
   const isImage = mime.startsWith('image/')
 
-  if (isImage && state.kind !== 'missing') {
+  if (isImage && (state.kind !== 'missing' || preview)) {
     const w = c.preview?.width, h = c.preview?.height
     const style = w && h ? { aspectRatio: `${w} / ${h}`, width: Math.min(w, 420) } : { minWidth: 240, minHeight: 160, maxWidth: 420 }
     return (
       <>
         <button className="att-image" style={style} onClick={() => url && setZoom(true)}>
           {url ? <img src={url} alt={name} loading="lazy" onError={retry} />
+            : preview ? <><img src={preview} alt={name} className="att-preview" /><span className="att-progress">Оригинал ещё на сервере отправителя{state.kind === 'fetching' && state.percent > 0 ? ` · ${state.percent}%` : ''}</span></>
             : <span className="att-skeleton">{state.kind === 'fetching' && <span className="att-progress">{state.percent}%</span>}</span>}
         </button>
         {zoom && url && (
@@ -92,8 +125,8 @@ export function Attachment({ m }: { m: ServerMessage }) {
   const missing = state.kind === 'missing'
   const Icon = missing ? CloudOff : iconFor(mime, name)
   const owner = String(c.from_instance ?? m.sender).split('/')[0]
-  const sub = missing ? `Файл у ${nameOf(owner).split(' ').slice(0, 2).join(' ')}, сейчас никто его не раздаёт`
-    : state.kind === 'fetching' ? `Сервер забирает файл… ${state.percent}%`
+  const sub = missing ? `Файл на сервере ${nameOf(owner).split(' ').slice(0, 2).join(' ')}, сервер пока его не отдаёт. Нажмите «Скачать» в приложении TrueConf — файл появится здесь`
+    : state.kind === 'fetching' ? `Забираю файл у отправителя… ${state.percent}%`
     : state.kind === 'loading' ? `${formatSize(size)} · проверяю…`
     : formatSize(size)
   return (
