@@ -14,7 +14,7 @@ import './App.css'
 
 function ScreenPicker() {
   const [list, setList] = useState<{ id: string; name: string; thumb: string }[] | null>(null)
-  useEffect(() => window.native?.onPickScreen?.(setList), [])
+  useEffect(() => window.native?.onPickScreen?.(setList), [])  // возвращает отписку
   if (!list) return null
   const pick = (id: string | null) => { window.native?.pickScreen(id); setList(null) }
   return (
@@ -33,7 +33,7 @@ function ScreenPicker() {
 const NAV: [Tab, typeof MessageSquare, string][] = [['chats', MessageSquare, 'Чаты'], ['contacts', Users, 'Контакты'], ['meet', Video, 'Конференции'], ['settings', Gear, 'Настройки']]
 
 export default function App() {
-  const { account, tab, set, theme, logout, unread, conference, toast } = useStore()
+  const { account, tab, set, theme, logout, unread, conference, toast, offline } = useStore()
   useEffect(() => { document.documentElement.dataset.theme = theme }, [theme])
 
   // Горячие клавиши звонка, как в Zoom/Meet.
@@ -54,6 +54,7 @@ export default function App() {
   return (
     <div className={`shell ${window.native?.platform === 'darwin' ? 'mac' : ''}`}>
       <div className="drag" />
+      {offline && <div className="offline-bar">Нет связи с сервером — переподключаюсь…</div>}
       <nav className="rail">
         <Avatar name={account.displayName || account.trueconfId} id={account.trueconfId} size={36} presence="online" />
         {NAV.map(([key, Icon, label]) => (

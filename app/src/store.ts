@@ -53,6 +53,8 @@ interface State {
   set: (p: Partial<State>) => void
   login: (server: string, login: string, password: string, remember: boolean) => Promise<void>
   logout: () => void
+  // Связь с сервером оборвалась, идёт переподключение; интерфейс остаётся на месте.
+  offline: boolean
   openChat: (chatId: string) => Promise<void>
   openP2P: (callId: string) => Promise<void>
   loadOlder: (chatId: string) => Promise<void>
@@ -189,7 +191,10 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  offline: false,
+
   logout: () => {
+    reconnecting = false
     get().conference?.hangup()
     get().client?.logout()
     window.native?.saveCredentials?.('', '', '')
@@ -538,7 +543,47 @@ function wireClient(client: TCClient) {
   })
   client.on('presence', (id, p) => st.setState({ presence: { ...st.getState().presence, [id]: p } }))
   client.on('loggedOut', cause => { st.getState().notify(cause === 1 ? 'Вы вошли с другого устройства' : 'Сессия завершена'); st.getState().logout() })
-  client.on('closed', () => { if (st.getState().client === client) { st.getState().notify('Соединение потеряно'); st.setState({ client: undefined, account: undefined }) } })
+  client.on('closed', () => { if (st.getState().client === client) reconnect() })
+}
+
+// Переподключение после обрыва (сон мака, смена сети, VPN): входим заново по сохранённым данным,
+// не выбрасывая пользователя на экран входа. Паузы между попытками растут до 30 с.
+let reconnecting = false
+async function reconnect() {
+  const st = useStore
+  if (reconnecting) return
+  const creds = await window.native?.loadCredentials?.()
+  if (!creds?.login) { st.getState().notify('Соединение потеряно'); st.setState({ client: undefined, account: undefined }); return }
+  reconnecting = true
+  const conf = st.getState().conference
+  if (conf) { conf.hangup(); st.setState({ conference: undefined }); st.getState().notify('Связь оборвалась — звонок завершён') }
+  st.setState({ offline: true, client: undefined })
+  let delay = 2000
+  while (reconnecting) {
+    const [host, port] = creds.server.split(':')
+    const client = new TCClient(host, Number(port) || 443)
+    try {
+      const account = await client.login(creds.login.includes('@') ? creds.login : `${creds.login}@${host}`, creds.password)
+      if (!reconnecting) { client.logout(); return }
+      reconnecting = false
+      wireClient(client)
+      st.setState({ client, account, offline: false })
+      const rest = new TCRest(host)
+      rest.login(creds.login, creds.password).then(() => st.setState({ rest }), () => {})
+      client.requestContacts()
+      // Пока не было связи, могли прийти сообщения: перечитываем список чатов и открытый чат.
+      const chats = await client.chatList()
+      historyLoaded.clear()
+      const active = st.getState().activeChatId
+      st.setState({ chats: sortChats(chats.filter(c => !hidden.has(c.chatId))), messages: active ? { [active]: st.getState().messages[active] ?? [] } : {} })
+      if (active) await st.getState().openChat(active)
+      return
+    } catch {
+      client.logout()
+      await new Promise(r => { const t = setTimeout(r, delay); window.addEventListener('online', () => { clearTimeout(t); r(undefined) }, { once: true }) })
+      delay = Math.min(delay * 2, 30000)
+    }
+  }
 }
 
 // trueconf:\c\<id>&h=host ; https://host/c/<id> ; голый id
