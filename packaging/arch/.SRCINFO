@@ -1,6 +1,6 @@
 pkgbase = trueconfx-bin
 	pkgdesc = Unofficial modern client for TrueConf Server
-	pkgver = 0.2.7
+	pkgver = 0.2.8
 	pkgrel = 1
 	url = https://github.com/Bloodrabbid/TrueConfX
 	arch = x86_64
@@ -18,10 +18,10 @@ pkgbase = trueconfx-bin
 	optdepends = libappindicator-gtk3: tray icon
 	provides = trueconfx
 	conflicts = trueconfx
-	noextract = TrueConfX-0.2.7.deb
+	noextract = TrueConfX-0.2.8.deb
 	options = !strip
 	options = !debug
-	source = TrueConfX-0.2.7.deb::https://github.com/Bloodrabbid/TrueConfX/releases/download/v0.2.7/TrueConfX-0.2.7-linux-amd64.deb
-	sha256sums = 1545b34d8497aafd892df2cea2e64bb07fccbf6dfd990d8e516d6ea500a236c8
+	source = TrueConfX-0.2.8.deb::https://github.com/Bloodrabbid/TrueConfX/releases/download/v0.2.8/TrueConfX-0.2.8-linux-amd64.deb
+	sha256sums = 95397c5fd280a03845d4fc3aea473831bb6b9e2eb9b064d29be7ebb5657da3f7
 
 pkgname = trueconfx-bin
