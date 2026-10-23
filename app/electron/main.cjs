@@ -88,11 +88,16 @@ app.whenReady().then(() => {
     win.webContents.downloadURL(url)
   })
   // Файл, который лежит у отправителя: качаем сами по порту 4307 (см. p2p.cjs).
-  ipcMain.handle('p2p-fetch', async (e, hosts, hash) => {
-    try {
-      const data = await p2p.fetchFile(hosts, hash, (got, total) => e.sender.send('p2p-progress', { hash, got, total }))
-      return { ok: true, data }
-    } catch (err) { return { ok: false, error: err.message } }
+  // Один файл — одна активная загрузка: опрос вложения каждые 5с не должен плодить
+  // параллельные скачивания одного и того же (иначе сид захлёбывается и загрузка срывается).
+  const p2pInflight = new Map()
+  ipcMain.handle('p2p-fetch', (e, hosts, hash) => {
+    if (p2pInflight.has(hash)) return p2pInflight.get(hash)
+    const task = p2p.fetchFile(hosts, hash, (got, total) => e.sender.send('p2p-progress', { hash, got, total }))
+      .then(data => ({ ok: true, data }), err => ({ ok: false, error: err.message }))
+      .finally(() => p2pInflight.delete(hash))
+    p2pInflight.set(hash, task)
+    return task
   })
   ipcMain.handle('notify', (_e, { title, body, chatId, silent }) => {
     const n = new Notification({ title, body, silent: !!silent })

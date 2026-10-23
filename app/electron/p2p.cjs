@@ -238,7 +238,11 @@ async function peersFromTracker(host, hexHash, port = 4307) {
 async function fetchFile(hosts, hexHash, onProgress) {
   const unique = [...new Set(hosts.filter(Boolean))]
   const peers = (await Promise.all(unique.map(h => peersFromTracker(h, hexHash)))).flat()
+  // Дедуп по host:port: трекер часто отдаёт один и тот же недостижимый origin-пир
+  // десятки раз, и без дедупа он забивает все слоты Promise.any.
+  const seen = new Set()
   const targets = [...unique.map(host => ({ host, port: 4307 })), ...peers]
+    .filter(t => { const k = `${t.host}:${t.port}`; return seen.has(k) ? false : (seen.add(k), true) })
   dbg('targets', targets.map(t => `${t.host}:${t.port}`).join(' '))
   try {
     return await Promise.any(targets.map(t => download(t.host, hexHash, { port: t.port, timeout: 4000, onProgress })))

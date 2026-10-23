@@ -37,7 +37,9 @@ function p2pLoad(hash: string, hosts: string[], mime: string): Promise<string | 
   return p
 }
 
-type FileState = { kind: 'loading' } | { kind: 'ready'; url: string } | { kind: 'fetching'; percent: number } | { kind: 'missing' }
+// reason у missing: 'deleted' — файл удалён с сервера (квота/срок, readyState 0);
+// 'cold' — файл ещё не выгружен отправителем (readyState 1), появится сам, когда он его раздаст.
+type FileState = { kind: 'loading' } | { kind: 'ready'; url: string } | { kind: 'fetching'; percent: number } | { kind: 'missing'; reason?: 'deleted' | 'cold' }
 
 function useFile(hash: string | undefined, size: number, mime: string, sender: string) {
   const client = useStore(s => s.client)
@@ -61,7 +63,9 @@ function useFile(hash: string | undefined, size: number, mime: string, sender: s
     const load = async () => {
       const e = await client.fileInfo(hash)
       if (!alive || done) return
-      if (!e) return setState({ kind: 'missing' })
+      // readyState (FileReadyStateEnum): 0 — удалён с сервера, 1 — не выгружен отправителем, 2 — готов.
+      if (!e) return setState({ kind: 'missing', reason: 'cold' })
+      if (e.readyState === 0) return setState({ kind: 'missing', reason: 'deleted' })
       setPreview(e.previews?.[0]?.downloadUrl)
       if (e.readyState === 2) return ready(e.downloadUrl)
       if (watching) return
@@ -71,7 +75,7 @@ function useFile(hash: string | undefined, size: number, mime: string, sender: s
         if (!alive || !Number.isFinite(bytes) || bytes > size * 2) return
         if (bytes >= size) { client.forgetFile(hash); watching = false; load() } else setState({ kind: 'fetching', percent: Math.floor((100 * bytes) / size) })
       })
-      if (alive && !done) setState(st => (!ok ? { kind: 'missing' } : st.kind === 'loading' ? { kind: 'fetching', percent: 0 } : st))
+      if (alive && !done) setState(st => (!ok ? { kind: 'missing', reason: 'cold' } : st.kind === 'loading' ? { kind: 'fetching', percent: 0 } : st))
     }
     load()
     tryP2P()
@@ -125,7 +129,11 @@ export function Attachment({ m }: { m: ServerMessage }) {
   const missing = state.kind === 'missing'
   const Icon = missing ? CloudOff : iconFor(mime, name)
   const owner = String(c.from_instance ?? m.sender).split('/')[0]
-  const sub = missing ? `Файл на сервере ${nameOf(owner).split(' ').slice(0, 2).join(' ')}, сервер пока его не отдаёт. Нажмите «Скачать» в приложении TrueConf — файл появится здесь`
+  const who = nameOf(owner).split(' ').slice(0, 2).join(' ')
+  const sub = missing
+    ? state.kind === 'missing' && state.reason === 'deleted'
+      ? 'Файл удалён с сервера (истёк срок хранения или квота)'
+      : `Файл ещё не выгружен на сервер отправителем (${who}). Появится сам, когда он раздаст файл в TrueConf`
     : state.kind === 'fetching' ? `Забираю файл у отправителя… ${state.percent}%`
     : state.kind === 'loading' ? `${formatSize(size)} · проверяю…`
     : formatSize(size)
