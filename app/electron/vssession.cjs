@@ -51,7 +51,27 @@ function buildFixedPartMessage (payload, { service, from = '', connId = '', to =
   let off = 0x10
   for (const b of strs) { b.copy(buf, off); off += b.length }
   payload.copy(buf, headerLen)
+  finalizeChecksums(buf)
   return buf
+}
+
+// Две однобайтовые контрольные суммы (FUN_1001c8570), иначе сервер молча
+// отбрасывает пакет. cs1→байт4 (по payload с шагом 16), cs2→байт1 (по
+// заголовку off 2..hdrLen; поле timeout 0xc..0xf на время счёта = 0).
+// Реализованы скалярные рекуррентности (в бинаре SIMD — их векторизация).
+function finalizeChecksums (buf) {
+  const hdrLen = buf.readUInt16LE(2)
+  const payloadM1 = buf[5] | (buf[6] << 8) | (buf[7] << 16)
+  // cs1: off = hdrLen, шаг 0x10, пока off <= payloadM1; seed 0xee
+  let off = hdrLen; let u = 0xee; let v = 0
+  do { v = ((u & 0xff) + buf[off]) & 0xff; u = off + v; off += 0x10 } while (off <= payloadM1)
+  buf[4] = (v + off - 0x10) & 0xff
+  // cs2: off 2..hdrLen; seed (byte0 & 0xdf)+0xac; timeout обнулён
+  const savedT = buf.readUInt32LE(12); buf.writeUInt32LE(0, 12)
+  u = ((buf[0] & 0xdf) + 0xac) & 0xff; v = u & 0xff; let i = 2
+  while (i !== hdrLen) { v = ((u & 0xff) + buf[i]) & 0xff; u = i + v; i++ }
+  buf.writeUInt32LE(savedT, 12)
+  buf[1] = (v + i - 1) & 0xff
 }
 
 // Разобрать конверт → { service, from, connId, to, fields }.
