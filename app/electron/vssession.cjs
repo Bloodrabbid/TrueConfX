@@ -1,36 +1,74 @@
 'use strict'
 // Сессионный слой нативного протокола TrueConf (порт 4307), ПОСЛЕ обмена ключами.
-// Прикладное сообщение = контейнер VS_Variant {Method, <params>} → range-код →
-// кадр [flen][dsize][coded] → AES-128-ECB(PKCS7) целиком. Два ключа: по одному
-// на направление (key1/key2 из EVP_Seal, см. vscrypto.sealKeyExchange).
+// Прикладное сообщение = контейнер VS_Variant {Method, params} → сериализация
+// (range-код) → payload; payload заворачивается в бинарный конверт
+// VS_FixedPartMessage; конверт ЦЕЛИКОМ шифруется AES-128-ECB(PKCS7). Два ключа
+// (key1/key2 из EVP_Seal) — по направлению.
 //
-// GROUNDED по разбору официального клиента 8.3.2:
-//   - encrypt/decrypt класса VS_SymmetricCrypt (@0x100966910/@0x1009669f0) —
-//     AES-128-ECB variant 2 с PKCS7 (байт-точно, см. vscrypto);
-//   - обёртки VS_TransportSession (@0x100159870 enc / @0x1009599b0 dec) шифруют
-//     буфер НА МЕСТЕ и возвращают новую длину — кадровку не добавляют;
-//   - на проводе у сессионного пакета НЕТ открытой длины (c2s[358] в захвате
-//     сразу высокоэнтропийный, kратен 16), а все прочие кадры — [flen]...;
-//     ECB позволяет расшифровать блок 0 и прочесть flen. Отсюда: шифруется
-//     ЦЕЛИКОМ кадр [flen][dsize][coded], приёмник снимает PKCS7 и парсит его.
-// LIVE-PENDING (финальная байт-сверка на стенде, где ключи генерю я сам):
-//   - подтвердить внутреннюю раскладку [flen][dsize][coded] на расшифрованном
-//     ответе сервера;
-//   - какой из key1/key2 на направление клиент→сервер (tx/rx).
+// GROUNDED по разбору официального клиента 8.3.2 (FUN_1001c9e70 — строитель
+// конверта, FUN_100224ed0 — отправка на именованный сервис, encrypt @0x100966910):
+//   - шифр AES-128-ECB variant 2 + PKCS7 (байт-точно, см. vscrypto);
+//   - конверт НЕ сжимается range-кодом (кодер зовётся только внутри сериализатора
+//     VS_Variant); внешней открытой длины на проводе нет — длину несёт заголовок
+//     конверта (u16 hdrLen@2 + payloadLen@5..7), приёмник чистит блок 0 ECB и
+//     отмеряет остаток, затем снимает PKCS7.
+// LIVE-PENDING (финальная байт-сверка на стенде, ключи генерю сам → ответ
+// расшифрую): значения runtime-полей заголовка (id@8, from, connId), и какой из
+// key1/key2 — на tx (клиент→сервер). Из захвата не взять (нет приватного ключа
+// сервера). Поэтому эти поля параметризованы, а не захардкожены.
 
 const vv = require('./vsvariant.cjs')
-const { buildFrame } = require('./vstransport.cjs')
 const { VSSymmetricCrypt } = require('./vscrypto.cjs')
 
-// Разобрать кадр [flen:u32 LE][dsize:u32 LE][range-coded: flen-4] в поля VS_Variant.
-function parseFrame (buf) {
-  if (buf.length < 8) return null
-  const flen = buf.readUInt32LE(0)
-  if (flen < 4 || buf.length < 4 + flen) return null
-  const dsize = buf.readUInt32LE(4)
-  const coded = buf.slice(8, 4 + flen)
-  const raw = vv.decode(coded, dsize)
-  return raw ? vv.parseContainer(raw) : null
+const TAG = '54' // тег протокола (литерал "54" в FUN_100224ed0)
+
+// Pascal-строка конверта: [len:1][bytes:len][0x00]. Длина без завершающего нуля.
+function pstr (s) {
+  const b = Buffer.from(s || '', 'latin1')
+  if (b.length > 0xff) throw new Error('строка конверта > 255 байт: ' + s)
+  return Buffer.concat([Buffer.from([b.length]), b, Buffer.from([0])])
+}
+
+// Конверт VS_FixedPartMessage (раскладка из FUN_1001c9e70).
+//  off 0   byte  0x81 | (flags&3)<<6
+//  off 2   u16   длина заголовка (смещение payload)
+//  off 5..7      payloadLen-1 (24 бита LE)
+//  off 8   u32   id
+//  off 0xc u32   timeout/seq
+//  off 0x10      9 pascal-строк: from, connId, "54", "", service, "", to, "", extra
+//  off hdrLen    payload (= сериализованный контейнер [dsize][coded])
+function buildFixedPartMessage (payload, { service, from = '', connId = '', to = '', extra = '', id = 0, timeout = 0, flags = 1 } = {}) {
+  const strs = [from, connId, TAG, '', service || '', '', to, '', extra].map(pstr)
+  const strTotal = strs.reduce((n, b) => n + b.length, 0)
+  const headerLen = 0x10 + strTotal
+  const buf = Buffer.alloc(headerLen + payload.length)
+  buf[0] = 0x81 | ((flags & 3) << 6)
+  const pm1 = (payload.length - 1) >>> 0
+  buf[5] = pm1 & 0xff; buf[6] = (pm1 >>> 8) & 0xff; buf[7] = (pm1 >>> 16) & 0xff
+  buf.writeUInt16LE(headerLen & 0xffff, 2)
+  buf.writeUInt32LE(id >>> 0, 8)
+  buf.writeUInt32LE(timeout >>> 0, 12)
+  let off = 0x10
+  for (const b of strs) { b.copy(buf, off); off += b.length }
+  payload.copy(buf, headerLen)
+  return buf
+}
+
+// Разобрать конверт → { service, from, connId, to, fields }.
+function parseFixedPartMessage (buf) {
+  if (buf.length < 16) return null
+  const headerLen = buf.readUInt16LE(2)
+  const payloadLen = (buf[5] | (buf[6] << 8) | (buf[7] << 16)) + 1
+  if (headerLen < 0x10 || headerLen + payloadLen > buf.length) return null
+  // 9 pascal-строк с off 0x10
+  const strs = []; let off = 0x10
+  for (let i = 0; i < 9 && off < headerLen; i++) {
+    const n = buf[off]; const s = buf.slice(off + 1, off + 1 + n).toString('latin1')
+    strs.push(s); off += n + 2
+  }
+  const payload = buf.slice(headerLen, headerLen + payloadLen)
+  const fields = vv.deserialize(payload) // [dsize][coded] → поля VS_Variant
+  return { from: strs[0], connId: strs[1], tag: strs[2], service: strs[4], to: strs[6], fields }
 }
 
 class VSSession {
@@ -40,17 +78,16 @@ class VSSession {
     this.dec = new VSSymmetricCrypt().setCipher(1, 2).setKey(keyRx)
   }
 
-  // Прикладное сообщение → байты тела на провод.
-  // fields: [{name,type,value}] — VS_Variant-поля (включая Method строкой).
-  // Кадр [flen][dsize][coded] шифруется целиком (PKCS7 даёт кратность блоку).
-  encodeBody (fields) {
-    return this.enc.encrypt(buildFrame(fields))
+  // Прикладное сообщение → байты на провод.
+  // fields: VS_Variant-поля (включая Method). opts: {service, from, connId, to, id, timeout}.
+  encodeBody (fields, opts = {}) {
+    const payload = vv.serialize(fields) // [dsize u32 LE][range-coded]
+    return this.enc.encrypt(buildFixedPartMessage(payload, opts))
   }
 
-  // Байты тела с провода → список полей VS_Variant.
-  // Снять PKCS7 (decrypt), затем распарсить кадр [flen][dsize][coded].
+  // Байты с провода → {service, from, connId, to, fields}.
   decodeBody (body) {
-    return parseFrame(this.dec.decrypt(body))
+    return parseFixedPartMessage(this.dec.decrypt(body))
   }
 }
 
@@ -66,4 +103,4 @@ function appMessage (method, params = {}) {
   return fields
 }
 
-module.exports = { VSSession, appMessage, parseFrame }
+module.exports = { VSSession, appMessage, buildFixedPartMessage, parseFixedPartMessage }

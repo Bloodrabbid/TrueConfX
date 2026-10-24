@@ -136,22 +136,72 @@ OpenSSL + движок ГОСТ (ГОСТ Р 34.10/34.11-2012 Стрибог, Г
   `ServerProcPacket`/seal-строителя). `setKey`: один ключ на enc- и dec-контекст,
   IV=NULL (ECB).
 
-Отсюда кадровка сессионного пакета (обоснована, не догадка):
+ВЕРДИКТ (трасса пути отправки до сокета, FUN_1001c9e70 + encrypt-in-place):
 ```
-wire = AES-128-ECB-PKCS7( [flen:u32 LE][dsize:u32 LE][range-coded container] )
+wire_session = AES-128-ECB-PKCS7( VS_FixedPartMessage )
 ```
-Доводы: (1) в захвате c2s[358] — сразу высокоэнтропийный блок, кратный 16,
-открытой длины на проводе НЕТ; (2) все прочие кадры (cert, seal) — `[flen]…`;
-(3) ECB позволяет расшифровать блок 0 и прочесть `flen`, PKCS7 потом снять.
-То есть шифруется ЦЕЛИКОМ транспортный кадр `[flen][dsize][coded]`.
-C528 (528Б на проводе) ⟹ plaintext 512–527Б (PKCS7) — сходится.
+Открытый текст сессии — это конверт **VS_FixedPartMessage**, а НЕ `[flen][dsize][coded]`
+(это формат ХЭНДШЕЙК-кадров). Конверт range-кодом НЕ сжимается (кодер зовётся
+только внутри сериализатора VS_Variant), внешней `[flen]`-кадровки нет — длину
+несёт сам заголовок конверта. Шифруется весь конверт целиком.
 
-`vssession.encodeBody` = `AES-PKCS7(buildFrame(fields))`; `decodeBody` —
-зеркально. Все 4 теста (vsvariant/vstransport/vscrypto/vssession) зелёные.
+Раскладка конверта (FUN_1001c9e70):
+```
+ off 0   byte  0x81 | (flags&3)<<6          (flags=1 → 0xC1)
+ off 2   u16   длина заголовка (смещение payload)
+ off 5..7      payloadLen-1 (24 бита LE)
+ off 8   u32   id
+ off 0xc u32   timeout/seq
+ off 0x10      9 pascal-строк [len:1][bytes][0x00]:
+               from, connId, "54"(тег), "", service, "", to, "", extra
+ off hdrLen    payload = [dsize:u32][range-coded VS_Variant контейнер]
+```
+Приёмник: ECB-расшифровка блока 0 → читает hdrLen@2 и payloadLen@5..7 → total =
+hdrLen+payloadLen → снимает PKCS7.
 
-LIVE-PENDING (финальная байт-сверка на стенде, где key1/key2 генерю я сам, т.е.
-ответ сервера РАСШИФРУЕМ): (а) подтвердить раскладку `[flen][dsize][coded]` на
-расшифрованном ответе; (б) какой из key1/key2 — на tx (клиент→сервер). Из
-захвата это НЕ взять: там client-seal на pubkey сервера, приватного ключа нет →
-C528 не расшифровать. Нужен живой заход с валидным первым прикладным пакетом
-(вероятно login через `Session`-токен из активной websocket-сессии TrueConfX).
+`vssession`: `buildFixedPartMessage(payload, {service,from,connId,to,id,timeout})`,
+`encodeBody(fields, opts) = AES-PKCS7(конверт(serialize(fields)))`, `decodeBody`
+зеркально → `{service, from, connId, to, fields}`. Все 4 теста зелёные.
+
+LIVE-PENDING (финальная байт-сверка на стенде, где key1/key2 генерю я сам, ответ
+сервера РАСШИФРУЕМ): (а) значения runtime-полей заголовка (id@8, from, connId);
+(б) какой из key1/key2 — на tx (клиент→сервер). Из захвата не взять (client-seal
+на pubkey сервера, приватного ключа нет → C528 не расшифровать). Нужен живой заход
+(собрать конверт → зашифровать → отправить → расшифровать ответ своим ключом).
+
+### Прикладной слой — вскрыт декомпиляцией (24.10.2026)
+
+Сообщение строится как контейнер VS_Variant и шлётся на ИМЕНОВАННЫЙ сервис:
+`FUN_100224ed0(mgr, container, service, …, timeout)` → сериализует контейнер
+(`FUN_100955e80` → `[dsize][coded]`) → конверт `VS_FixedPartMessage`
+(`FUN_1001c8240`→`FUN_1001c9e70`) → очередь отправки `(*(mgr+0x18)+0x48)` у
+`VSZTransport`; затем конверт шифруется сессионным AES (см. ВЕРДИКТ выше).
+
+Поле VS_Variant пишет `FUN_100954950(cont, name, namelen, type, value, vlen)`
+(совпадает с `vsvariant`: type 1=u32, 3=строка, 4=байты).
+
+13 сервисов (константа = имя на проводе): `AUTH`, `CLIENT`, `ABOOK`, `CHAT`,
+`CHATV2`, `CONFERENCE`, `NET_CONFIG`(configuration), `DS_CONTROL`, `LOG`,
+`PRESENCE`, `Time`, `TORRENT`, `VAD_CONTROL`. Поля маршрутизации в протоколе:
+`Method`, `From`, `To`, `Services`, `SeqID`.
+
+Конверт `VS_FixedPartMessage` — раскладка вынесена выше (раздел «Кадровка сессии»,
+ВЕРДИКТ). Реализован в `vssession.buildFixedPartMessage`.
+
+**Вход `LoginUser`** (строитель `FUN_100315280`, поля сверены с длинами в коде):
+сервис `AUTH`, контейнер:
+```
+ Method            (3) = "LoginUser"
+ clientChatVersion (3)   если ещё не задан
+ chatCapabilities  (3)
+ Login             (3)
+ Password          (3)   ПАРОЛЬ         ┐ взаимоисключающе:
+ Key               (3)   ТОКЕН(=cred.3) ┘ пароль→Password+Key="", токен→только Key
+ UserDefaultDomain (3)   опц.
+ Hash              (4)   опц.
+ ClientType        (1=u32)
+ AppName           (3)
+```
+Тип auth (из моста): JWT 0 / RAW 2 / TOKEN 3 / MD5 4. Для `GetAppProps`
+(сервис `NET_CONFIG`) поля: `Method`,`ClientVersion`,`SeqID`(u32),`Name`; ответ
+несёт `server_protocol_version`,`chatVersion`,`call_history_as_one_list`,`SeqID`.
