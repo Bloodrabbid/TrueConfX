@@ -1,0 +1,5 @@
+# Локальные данные живого захвата (корп-трафик) — не коммитить
+native_capture_fixtures.json
+.cert_frame.bin
+
+.server_cert.pem
