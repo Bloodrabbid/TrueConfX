@@ -27,8 +27,13 @@ function deriveKey (v1buf, v2rnd, signSel) {
 // Симметричный шифр VS_SymmetricCrypt. Семейства: 1=AES, 0xc=ГОСТ-89.
 // AES — режим ECB без IV (setKey @0x100966750: IV=NULL). ГОСТ в Node без
 // OpenSSL-движка недоступен — обозначено явно.
+//
+// Паддинг PKCS7 ВКЛЮЧЁН (по умолчанию OpenSSL). Подтверждено байт-точно по
+// методу encrypt @0x100966910: буфер считается как (len/bs + 1)*bs — всегда
+// целый лишний блок, т.е. PKCS7-блок; EVP_CIPHER_CTX_set_padding(0) нигде не
+// зовётся. Раньше тут был ручной zero-pad — это была ошибка.
 class VSSymmetricCrypt {
-  constructor () { this.family = 0; this.key = null; this.pad = false }
+  constructor () { this.family = 0; this.key = null; this.pad = true }
   setCipher (family /* 1=AES, 0xc=GOST */, variant) {
     this.family = family; this.variant = variant
     if (family !== 1) throw new Error('семейство шифра ' + family + ' (ГОСТ) в Node не поддержано')
