@@ -14,12 +14,17 @@
                                                │                              (тот же протокол,
                                                └─ WebRTC (MCU, 1 PeerConnection)  что у веб-клиента /webrtc)
  electron/main.cjs: CORS-мост, камера/микрофон, выбор экрана, Keychain для пароля, ссылки trueconfx://
+ electron/vssession.cjs + p2p.cjs: нативный протокол :4307 (AUTH, TORRENT/TrackerAnnounce, MSE + BitTorrent)
+ electron/updater.cjs: автообновление из интерфейса по релизам GitHub (macOS / Windows / Linux)
 ```
 
 - `src/tc/socket.ts` — сигнальный WebSocket (кадр = JSON с полем `method`).
 - `src/tc/client.ts` — вход `loginUser`, чаты ChatV2, адресная книга, статусы.
 - `src/tc/conference.ts` — вход в конференцию, SDP/ICE, микрофон, камера, экран, участники, реакции.
 - `src/tc/turn.ts` — расшифровка пароля TURN (AES-GCM + HKDF).
+- `electron/vstransport.cjs`, `vscrypto.cjs`, `vsvariant.cjs`, `vssession.cjs` — нативный бинарный протокол `:4307` (`_VS_TRANSPORT_`, `EVP_Seal`, `VS_FixedPartMessage`, `AUTH`, `TORRENT/TrackerAnnounce`, см. [`app/electron/NATIVE.md`](app/electron/NATIVE.md)).
+- `electron/p2p.cjs` — скачивание вложений и картинок по `:4307` (`TC_FILETRANSFER_____` MSE + BitTorrent + `ut_metadata`).
+- `electron/updater.cjs` — проверка новых релизов на GitHub и обновление в один клик прямо из интерфейса.
 - `docs/PROTOCOL-*.md` — восстановленный протокол со ссылками на код веб-клиента.
 
 ## Скачать

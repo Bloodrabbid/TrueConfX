@@ -125,15 +125,30 @@ app.whenReady().then(() => {
   })
   // Логин и пароль храним зашифрованными системным хранилищем ключей (Keychain/DPAPI/libsecret).
   const credFile = path.join(app.getPath('userData'), 'credentials.bin')
+  const readStoredCredentials = () => {
+    try {
+      if (!fs.existsSync(credFile)) return null
+      return JSON.parse(safeStorage.decryptString(fs.readFileSync(credFile)))
+    } catch {
+      return null
+    }
+  }
   const startBackgroundNativeSession = (opts = {}) => {
-    if (opts.server || opts.login || opts.password || opts.key) {
-      const host = String(opts.server || 'tc.t2.ru').split(':')[0]
+    const eff = (opts.server || opts.login || opts.password || opts.key)
+      ? opts
+      : (readStoredCredentials() || opts)
+    if (eff.server || eff.login || eff.password || eff.key) {
+      const fallbackHost = eff.login && String(eff.login).includes('@')
+        ? String(eff.login).split('@')[1].split('/')[0]
+        : ''
+      const host = String(eff.server || fallbackHost || '').split(':')[0]
       vs.configureNativeSession({
-        host,
-        login: opts.login ? (opts.login.includes('@') ? opts.login : `${opts.login}@${host}`) : undefined,
-        cid: opts.cid,
-        key: opts.key,
-        password: opts.password
+        host: host || undefined,
+        login: eff.login ? (eff.login.includes('@') || !host ? eff.login : `${eff.login}@${host}`) : undefined,
+        cid: eff.cid,
+        key: eff.key,
+        password: eff.password,
+        forcePassword: eff.forcePassword
       })
     }
     return vs.ensureNativeSession().then(conn => {
@@ -162,14 +177,9 @@ app.whenReady().then(() => {
     fs.writeFileSync(credFile, safeStorage.encryptString(JSON.stringify({ server, login, password })))
   })
   ipcMain.handle('load-credentials', () => {
-    try {
-      const creds = JSON.parse(safeStorage.decryptString(fs.readFileSync(credFile)))
-      if (creds) startBackgroundNativeSession(creds)
-      return creds
-    } catch {
-      startBackgroundNativeSession()
-      return null
-    }
+    const creds = readStoredCredentials()
+    startBackgroundNativeSession(creds || {})
+    return creds
   })
   ipcMain.handle('native-connect', async (_e, opts = {}) => {
     const conn = await startBackgroundNativeSession(opts)

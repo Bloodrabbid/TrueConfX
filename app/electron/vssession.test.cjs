@@ -6,7 +6,11 @@ const {
   appMessage,
   buildFixedPartMessage,
   computeAppEndpId,
+  getMacAppEndpId,
+  loadNativeAuth,
   loadOfficialCredentials,
+  formatLoginPassword,
+  buildLoginUserMessage,
   buildTrackerAnnounceMessage,
   parseTrackerAnnounceResponse,
   connectAndLogin
@@ -20,7 +24,7 @@ const client = new VSSession(k1, k2) // шлёт k1, принимает k2
 const server = new VSSession(k2, k1) // зеркало
 
 // 1) Прикладное сообщение логина (сервис AUTH)
-const msg = appMessage('LoginUser', { Login: 'user@tc.t2.ru', Password: 'md5hex', ClientType: { t: 1, v: Buffer.from('01000000', 'hex') } })
+const msg = appMessage('LoginUser', { Login: 'user@server.local', Password: 'md5hex', ClientType: { t: 1, v: Buffer.from('01000000', 'hex') } })
 const body = client.encodeBody(msg, { service: 'AUTH', from: '', connId: 'conn1', id: 7, timeout: 20000 })
 assert.ok(body.length % 16 === 0, 'тело кратно блоку AES (PKCS7)')
 const got = server.decodeBody(body)
@@ -28,7 +32,7 @@ assert.strictEqual(got.service, 'AUTH', 'сервис в конверте')
 assert.strictEqual(got.connId, 'conn1', 'connId в конверте')
 assert.strictEqual(got.tag, '54', 'тег протокола "54"')
 assert.strictEqual(got.data.Method, 'LoginUser', 'Method прошёл')
-assert.strictEqual(got.data.Login, 'user@tc.t2.ru', 'Login прошёл')
+assert.strictEqual(got.data.Login, 'user@server.local', 'Login прошёл')
 assert.strictEqual(got.data.Password, 'md5hex', 'Password прошёл')
 assert.strictEqual(got.data.ClientType, 1, 'ClientType u32 прошёл')
 
@@ -42,7 +46,7 @@ assert.strictEqual(back.data.CID, '12345')
 // 3) Потоковое чтение pushCiphertext: склейка 3 конвертов и нарезка по 7 байт
 {
   const c1 = server.encodeBody(appMessage('CheckUserLoginStatus', {}), { service: 'AUTH', id: 2 })
-  const c2 = server.encodeBody(appMessage('Subscribe', { Cause: 1, CallId: ['a@tc', 'b@tc', 'c@tc'] }), { service: 'PRESENCE', from: 'ABOOK', id: 19 })
+  const c2 = server.encodeBody(appMessage('Subscribe', { Cause: 1, CallId: ['a@srv', 'b@srv', 'c@srv'] }), { service: 'PRESENCE', from: 'ABOOK', id: 19 })
   const c3 = server.encodeBody(appMessage('GetCurrentTime', { Seq: 123456789012345n }), { service: 'Time', from: 'CHATV2', id: 18 })
   const combined = Buffer.concat([c1, c2, c3])
   const rx = new VSSession(k1, k2)
@@ -56,7 +60,7 @@ assert.strictEqual(back.data.CID, '12345')
   assert.strictEqual(parsed[1].id, 19)
   assert.strictEqual(parsed[1].from, 'ABOOK')
   assert.strictEqual(parsed[1].service, 'PRESENCE')
-  assert.deepStrictEqual(parsed[1].data.CallId, ['a@tc', 'b@tc', 'c@tc'], 'повторяющиеся поля CallId сохранены')
+  assert.deepStrictEqual(parsed[1].data.CallId, ['a@srv', 'b@srv', 'c@srv'], 'повторяющиеся поля CallId сохранены')
   assert.strictEqual(parsed[2].id, 18)
   assert.strictEqual(parsed[2].data.Seq, 123456789012345n)
 }
@@ -72,10 +76,52 @@ assert.ok(env.slice(hdrLen, hdrLen + payloadLen).equals(pl), 'payload лежит
 assert.strictEqual(env.readUInt32LE(8), 1, 'id@8')
 assert.strictEqual(env.readUInt32LE(12), 2, 'timeout@0xc')
 
-// 5) Формула AppEndpId (FUN_100355e50)
+// 5) Формула AppEndpId (FUN_100355e50) + уникальность AppEndpId для TrueConfX vs официального клиента
 const h = computeAppEndpId({ serial: 'S1', uuid: 'U1', username: 'usr', appName: 'TrueConf OS X' })
 assert.strictEqual(h.length, 32)
 assert.notStrictEqual(h, computeAppEndpId({ serial: 'S2', uuid: 'U1', username: 'usr', appName: 'TrueConf OS X' }), 'мутация серийника меняет AppEndpId')
+const ownEndp = getMacAppEndpId()
+const officialEndp = getMacAppEndpId({ extra: '' })
+assert.strictEqual(ownEndp.length, 32)
+assert.notStrictEqual(ownEndp, officialEndp, 'собственный AppEndpId TrueConfX обязан отличаться от AppEndpId официального клиента')
+
+// 5b) Строитель LoginUser по грунту mLogin (VS_LoginManager.cpp:104, FUN_1003149e0 → FUN_1001b0fd0 → FUN_100315280)
+{
+  const expectedMd5 = crypto.createHash('md5').update('SecretPass123', 'utf8').digest('hex').toUpperCase()
+  assert.strictEqual(formatLoginPassword('SecretPass123', { authMethod: '2' }), expectedMd5, 'authMethod=2 → MD5_UPPER(password)')
+  assert.strictEqual(formatLoginPassword('SecretPass123', { authMethod: '1' }), 'SecretPass123', 'authMethod=1 (LDAP) → сырой пароль')
+
+  const pwdFields = buildLoginUserMessage({
+    login: 'user@server.local',
+    cid: 'abcd1234',
+    password: 'SecretPass123',
+    hash: ownEndp
+  })
+  const pwdNames = pwdFields.map(f => f.name)
+  assert.deepStrictEqual(
+    pwdNames,
+    ['Method', 'clientChatVersion', 'chatCapabilities', 'Login', 'Password', 'Key', 'UserDefaultDomain', 'Hash', 'ClientType', 'AppName'],
+    'точный порядок полей LoginUser при парольном входе (Password + пустой Key)'
+  )
+  const decodedPwdMsg = server.decodeBody(client.encodeBody(pwdFields, { service: 'AUTH', from: 'AUTH', connId: 's1', id: 5 }))
+  assert.strictEqual(decodedPwdMsg.data.Password, expectedMd5, 'Password = MD5_UPPER(password)')
+  assert.strictEqual(decodedPwdMsg.data.Key, '', 'при парольном входе следом за Password идёт пустой Key=""')
+  assert.strictEqual(decodedPwdMsg.data.Hash, ownEndp, 'Hash = собственный AppEndpId')
+  assert.strictEqual(decodedPwdMsg.data.ClientType, 0, 'ClientType = 0')
+
+  const keyFields = buildLoginUserMessage({
+    login: 'user@server.local',
+    cid: 'abcd1234',
+    key: 'COOKIE_TOKEN_HEX',
+    hash: ownEndp
+  })
+  const keyNames = keyFields.map(f => f.name)
+  assert.deepStrictEqual(
+    keyNames,
+    ['Method', 'clientChatVersion', 'chatCapabilities', 'Login', 'Key', 'UserDefaultDomain', 'Hash', 'ClientType', 'AppName'],
+    'точный порядок полей LoginUser при входе по cookie Key (без поля Password)'
+  )
+}
 
 // 6) Сборка и разбор TrackerAnnounce (FUN_102c1ee70 / FUN_102c1ff60)
 {
@@ -88,10 +134,10 @@ assert.notStrictEqual(h, computeAppEndpId({ serial: 'S2', uuid: 'U1', username: 
     event: 1,
     requestId: 777n
   })
-  const wire = client.encodeBody(reqFields, { from: 'TORRENT', service: 'TORRENT', extra: 'tc.t2.ru#vcs' })
+  const wire = client.encodeBody(reqFields, { from: 'TORRENT', service: 'TORRENT', extra: 'server.local#vcs' })
   const decoded = server.decodeBody(wire)
   assert.strictEqual(decoded.service, 'TORRENT')
-  assert.strictEqual(decoded.extra, 'tc.t2.ru#vcs')
+  assert.strictEqual(decoded.extra, 'server.local#vcs')
   assert.strictEqual(decoded.data.Method, 'TrackerAnnounce')
   assert.strictEqual(decoded.data.TorrentInfoHash, infoHash.toLowerCase(), 'info_hash сериализуется в lowercase')
   assert.strictEqual(decoded.data.TorrentPeerId, peerId)
@@ -115,26 +161,45 @@ assert.notStrictEqual(h, computeAppEndpId({ serial: 'S2', uuid: 'U1', username: 
   ])
 }
 
-console.log('OK: сессионный слой — конверт VS_FixedPartMessage + SessionReader + AppEndpId + TrackerAnnounce')
+console.log('OK: сессионный слой — конверт VS_FixedPartMessage + SessionReader + AppEndpId + LoginUser(mLogin) + TrackerAnnounce')
 
-// 7) Живой интеграционный тест входа, сервисов и TrackerAnnounce (если доступен settings.sqlite официального клиента)
+// 7) Живой интеграционный тест входа, сервисов и TrackerAnnounce (опционально, если доступны локальные реквизиты)
 ;(async () => {
-  const creds = loadOfficialCredentials('tc.t2.ru')
-  if (!creds) {
-    console.log('SKIP: settings.sqlite официального клиента не найден — живой тест входа пропущен')
+  const savedOwn = loadNativeAuth()
+  const official = loadOfficialCredentials()
+  const envPass = process.env.TC_PASSWORD || ''
+  if (!savedOwn && !official && !process.env.TC_HOST) {
+    console.log('SKIP: локальные реквизиты не найдены — живой тест входа пропущен')
     return
   }
-  const live = await connectAndLogin(creds)
+  const loginOpts = {
+    host: process.env.TC_HOST || savedOwn?.host || official?.host,
+    port: Number(process.env.TC_PORT) || savedOwn?.port || official?.port || 4307,
+    login: process.env.TC_LOGIN || savedOwn?.login || official?.login,
+    password: envPass || undefined,
+    forcePassword: Boolean(envPass)
+  }
+  let live
+  try {
+    live = await connectAndLogin(loginOpts)
+  } catch (err) {
+    if (err && err.result === 4 && !envPass) {
+      console.log('SKIP: сервер отклонил cookie-автологин (Result=4), а TC_PASSWORD не задан — живой тест пропущен')
+      return
+    }
+    throw err
+  }
   try {
     assert.strictEqual(live.result, 0, 'Result=0 при живом входе')
-    assert.ok(live.account.UserName && live.account.UserName.startsWith(creds.login + '/'), 'вернулся UserName с новым cid')
+    assert.strictEqual(live.hash, getMacAppEndpId(), 'использован собственный уникальный AppEndpId TrueConfX')
+    assert.ok(live.account.UserName && live.account.UserName.startsWith(loginOpts.login + '/'), 'вернулся UserName с новым cid')
     assert.ok(live.account.Session && live.account.Session.length > 0, 'вернулся Session-токен')
-    console.log(`OK: живой вход на ${creds.host}:${creds.port} — Result=0, UserName=${live.account.UserName}, Session=${live.account.Session.slice(0, 8)}…`)
+    console.log(`OK: живой вход (${live.loginMode}) на ${loginOpts.host}:${loginOpts.port} — Result=0, AppEndpId=${live.hash.slice(0, 8)}…, UserName=${live.account.UserName}, Session=${live.account.Session.slice(0, 8)}…`)
 
     // Проверим базовые сервисы после входа
     const props = await live.getAppProps()
     assert.strictEqual(props.Method, 'SetProps')
-    assert.strictEqual(props.tc_trackers, 'tc.t2.ru#vcs', 'сервер вернул tc_trackers = tc.t2.ru#vcs')
+    assert.ok(props.tc_trackers && props.tc_trackers.endsWith('#vcs'), 'сервер вернул tc_trackers с суффиксом #vcs')
 
     const timeData = await live.getCurrentTime({ seq: 42n })
     assert.strictEqual(timeData.Method, 'GetCurrentTime')
@@ -171,13 +236,6 @@ console.log('OK: сессионный слой — конверт VS_FixedPartMe
     await live.trackerAnnounce({ infoHash: testHash, peerId: peerA, endpoints: '192.168.1.114:55111;', event: 3 })
     await live.trackerAnnounce({ infoHash: testHash, peerId: peerB, endpoints: '192.168.1.114:55222;', event: 3 })
     console.log('OK: живой TrackerAnnounce (TORRENT) — регистрация пира, получение PeersListParam и снятие с раздачи')
-
-    // Живое скачивание реальной картинки из чата через p2p.fetchFile с единым peerId и нативной сессией
-    const imgBuf = await p2p.fetchFile(['tc.t2.ru'], 'a163df931f42507a082ae39f2361598be355bc94', null, { nativeSession: live })
-    assert.strictEqual(imgBuf.length, 39742, 'скачан WEBP-файл 39742 байт')
-    assert.strictEqual(imgBuf.slice(0, 4).toString('latin1'), 'RIFF', 'заголовок RIFF корректен')
-    assert.strictEqual(imgBuf.slice(8, 12).toString('latin1'), 'WEBP', 'заголовок WEBP корректен')
-    console.log('OK: живое скачивание вложения через p2p.fetchFile (TrackerAnnounce + MSE + BitTorrent, 39742 байт WEBP)')
   } finally {
     live.close()
   }

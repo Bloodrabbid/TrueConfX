@@ -29,6 +29,7 @@ const { VSSymmetricCrypt, sealKeyExchangeFromCert } = require('./vscrypto.cjs')
 
 const TAG = '54' // тег протокола (литерал "54" в FUN_100224ed0)
 const DEFAULT_APP_NAME = 'TrueConf OS X'
+const DEFAULT_ENDP_EXTRA = 'TrueConfX' // свой уникальный маркер эндпоинта, чтобы AppEndpId отличался от F4F93E... официального клиента
 const DEFAULT_CHAT_CAPS = JSON.stringify([
   'list_who_viewed_message',
   'personal_contexts_contain_permissions',
@@ -152,7 +153,7 @@ function parseFixedPartMessage (buf) {
 }
 
 class VSSession {
-  // keyTx = key1 (клиент→сервер), keyRx = key2 (сервер→клиент) — подтверждено на живом tc.t2.ru.
+  // keyTx = key1 (клиент→сервер), keyRx = key2 (сервер→клиент).
   constructor (keyTx, keyRx) {
     this.enc = new VSSymmetricCrypt().setCipher(1, 2).setKey(keyTx)
     this.dec = new VSSymmetricCrypt().setCipher(1, 2).setKey(keyRx)
@@ -238,7 +239,9 @@ function computeAppEndpId ({ serial = '', uuid = '', username = '', extra = '', 
   return md5Upper(h1 + h2 + h3 + h4)
 }
 
-function getMacAppEndpId (appName = DEFAULT_APP_NAME) {
+function getMacAppEndpId (opts = {}) {
+  const { extra = DEFAULT_ENDP_EXTRA, appName = DEFAULT_APP_NAME } =
+    typeof opts === 'string' ? { appName: opts } : (opts || {})
   let serial = ''; let uuid = ''
   if (process.platform === 'darwin') {
     try {
@@ -248,11 +251,62 @@ function getMacAppEndpId (appName = DEFAULT_APP_NAME) {
     } catch {}
   }
   const username = os.userInfo().username || ''
-  return computeAppEndpId({ serial, uuid, username, appName })
+  return computeAppEndpId({ serial, uuid, username, extra, appName })
+}
+
+function getNativeAuthPath (customPath) {
+  if (customPath) return customPath
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library/Application Support/TrueConfX/native-auth.json')
+  }
+  return path.join(os.homedir(), '.trueconfx-native-auth.json')
+}
+
+function loadNativeAuth (domain = '', customPath) {
+  const p = getNativeAuthPath(customPath)
+  try {
+    if (!fs.existsSync(p)) return null
+    const all = JSON.parse(fs.readFileSync(p, 'utf8'))
+    if (domain) {
+      const key = String(domain).toLowerCase()
+      if (all[key]) return all[key]
+    }
+    return all.default || null
+  } catch {
+    return null
+  }
+}
+
+function saveNativeAuth (entry, customPath) {
+  if (!entry || !entry.login || !entry.key) return
+  const hostOrDom = entry.domain || entry.host || (String(entry.login).split('@')[1] || '').split('/')[0]
+  if (!hostOrDom) return
+  const p = getNativeAuthPath(customPath)
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    let all = {}
+    if (fs.existsSync(p)) {
+      try { all = JSON.parse(fs.readFileSync(p, 'utf8')) || {} } catch {}
+    }
+    const domKey = String(hostOrDom).toLowerCase()
+    const record = {
+      host: entry.host || hostOrDom,
+      port: Number(entry.port) || 4307,
+      domain: entry.domain || entry.host || hostOrDom,
+      login: entry.login,
+      cid: entry.cid || '',
+      key: entry.key,
+      hash: entry.hash || getMacAppEndpId(),
+      updatedAt: new Date().toISOString()
+    }
+    all[domKey] = record
+    all.default = record
+    fs.writeFileSync(p, JSON.stringify(all, null, 2), { mode: 0o600 })
+  } catch {}
 }
 
 // Чтение автологин-реквизитов из settings.sqlite официального клиента TrueConf.
-function loadOfficialCredentials (domain = 'tc.t2.ru', dbPath) {
+function loadOfficialCredentials (domain = '', dbPath) {
   const targetPath = dbPath || path.join(
     os.homedir(),
     'Library/Containers/org.trueconf.client/Data/Library/Application Support/TrueConf/settings.sqlite'
@@ -265,27 +319,59 @@ function loadOfficialCredentials (domain = 'tc.t2.ru', dbPath) {
     for (const r of db.prepare('SELECT Name, CAST(Value AS TEXT) AS val FROM settings').all()) {
       settings[r.Name] = r.val
     }
-    const targetDomain = domain || settings.ServerDomain || settings.ServerAddress || 'tc.t2.ru'
-    const row = db.prepare('SELECT Domain, Login, Key FROM logins WHERE Domain = ? COLLATE NOCASE').get(targetDomain)
+    const targetDomain = domain || settings.ServerDomain || settings.ServerAddress || ''
+    const row = targetDomain
+      ? db.prepare('SELECT Domain, Login, Key FROM logins WHERE Domain = ? COLLATE NOCASE').get(targetDomain)
+      : db.prepare('SELECT Domain, Login, Key FROM logins LIMIT 1').get()
     if (!row || !row.Login || !row.Key) return null
     const [trueconfId, savedCid] = String(row.Login).split('/')
     return {
-      host: settings.ServerAddress || targetDomain,
+      host: settings.ServerAddress || row.Domain || targetDomain,
       port: Number(settings.ServerPort) || 4307,
       domain: row.Domain,
       loginWithCid: row.Login,
       login: trueconfId,
       cid: savedCid || crypto.randomBytes(4).toString('hex'),
       key: row.Key,
-      hash: getMacAppEndpId(DEFAULT_APP_NAME)
+      hash: getMacAppEndpId({ extra: '', appName: DEFAULT_APP_NAME })
     }
   } finally {
     db.close()
   }
 }
 
+// Форматирование поля Password по грунту из mLogin (VS_LoginManager.cpp:104, FUN_1003149e0 @ 0x1003149e0):
+//   - FUN_10019a3a0(serverObj) читает *(uint8_t*)(serverObj + 0xc8) (в конструкторе 0x1001b0519 = 1).
+//   - При приёме SetProps (FUN_10019a4b0 → 0x1001b07e0) флаг ставится в (authentication_method[0] != '1')
+//     (дефолт свойства "authentication_method" = "2" @ 0x1080d81d8).
+//   - При flag != 0 (authMethod !== '1') вызывается FUN_1001b0fd0(password) (@ 0x1001b0fd0):
+//     MD5(password) в формате "%02X" (@ 0x107a46b93) → 32-символьный UPPERCASE hex.
+//   - При flag == 0 (authMethod === '1', LDAP/AD) пароль передаётся сырой строкой без MD5.
+function formatLoginPassword (password, { authMethod = '2', rawPassword = false, alreadyHashed = false } = {}) {
+  const str = String(password ?? '')
+  if (!str) return ''
+  if (rawPassword || String(authMethod) === '1') return str
+  if (alreadyHashed) return str.toUpperCase()
+  return md5Upper(Buffer.from(str, 'utf8'))
+}
+
 // Собрать поля сообщения LoginUser (порядок полей строго по строителю FUN_100315280).
-function buildLoginUserMessage ({ login, cid, key = '', password, domain = '', hash, clientType = 0, appName = DEFAULT_APP_NAME, chatCapabilities = DEFAULT_CHAT_CAPS }) {
+// При парольном входе (loginType=2 в FUN_100315170, ветка *(int*)(param_3+0x48) != 3 в FUN_100315280)
+// пишутся оба поля: Password = formatLoginPassword(...) и следом пустой Key = "" (len=1, 0x00).
+function buildLoginUserMessage ({
+  login,
+  cid,
+  key = '',
+  password,
+  authMethod = '2',
+  rawPassword = false,
+  passwordAlreadyHashed = false,
+  domain = '',
+  hash,
+  clientType = 0,
+  appName = DEFAULT_APP_NAME,
+  chatCapabilities = DEFAULT_CHAT_CAPS
+}) {
   const fullLogin = login.includes('/') ? login : `${login}/${cid || crypto.randomBytes(4).toString('hex')}`
   const entries = [
     ['clientChatVersion', '3'],
@@ -293,13 +379,18 @@ function buildLoginUserMessage ({ login, cid, key = '', password, domain = '', h
     ['Login', fullLogin]
   ]
   if (password !== undefined && password !== null && password !== '') {
-    entries.push(['Password', password], ['Key', ''])
+    const pwdVal = formatLoginPassword(password, {
+      authMethod,
+      rawPassword,
+      alreadyHashed: passwordAlreadyHashed
+    })
+    entries.push(['Password', pwdVal], ['Key', ''])
   } else {
     entries.push(['Key', key])
   }
   entries.push(
     ['UserDefaultDomain', domain],
-    ['Hash', hash || getMacAppEndpId(appName)],
+    ['Hash', hash || getMacAppEndpId({ appName })],
     ['ClientType', { t: 1, v: clientType }],
     ['AppName', appName]
   )
@@ -371,7 +462,7 @@ function parseTrackerAnnounceResponse (msgOrFields) {
   }
 }
 
-// Нормализовать имя трекера для поля extra конверта TORRENT (например "tc.t2.ru" → "tc.t2.ru#vcs").
+// Нормализовать имя трекера для поля extra конверта TORRENT (например "server.local" → "server.local#vcs").
 function normalizeTrackerExtra (tracker, defaultRealm = '') {
   if (!tracker) return defaultRealm || ''
   const t = String(tracker).trim()
@@ -382,19 +473,71 @@ function normalizeTrackerExtra (tracker, defaultRealm = '') {
 }
 
 // Полный цикл подключения и входа по нативному протоколу 4307.
+// Поддерживает:
+//   1) Свой уникальный AppEndpId (getMacAppEndpId с extra="TrueConfX", не конфликтует с офиц. клиентом).
+//   2) Автологин своим сохранённым cookie Key (из native-auth.json).
+//   3) При отсутствии своего cookie или при Result=4 — парольный вход mLogin (VS_LoginManager.cpp:104,
+//      FUN_1003149e0 → FUN_100315280: Password = MD5_UPPER(password) + Key = ""), регистрацию
+//      своего AppEndpId и сохранение выданного сервером свежего Key в native-auth.json.
 function connectAndLogin (opts = {}) {
-  let { host = 'tc.t2.ru', port = 4307, login, cid, key, password, hash, appName = DEFAULT_APP_NAME, timeoutMs = 12000 } = opts
-  if (!login || (!key && !password)) {
-    const saved = loadOfficialCredentials(host)
-    if (saved) {
-      host = opts.host || saved.host || host
-      port = opts.port || saved.port || port
-      login = login || saved.login
-      cid = cid || saved.cid
-      key = key || saved.key
-      hash = hash || saved.hash
+  let {
+    host = '',
+    port = 4307,
+    domain = '',
+    login,
+    cid,
+    key,
+    password,
+    authMethod = '2',
+    rawPassword = false,
+    passwordAlreadyHashed = false,
+    forcePassword = false,
+    hash,
+    appName = DEFAULT_APP_NAME,
+    persistAuth = true,
+    authPath,
+    timeoutMs = 12000
+  } = opts
+
+  const ownEndpId = getMacAppEndpId({ appName })
+  hash = hash || ownEndpId
+
+  // 1) Проверяем собственное хранилище нативной сессии TrueConfX (свой cookie Key для своего AppEndpId)
+  const savedOwn = loadNativeAuth(host, authPath)
+  if (savedOwn && (!savedOwn.hash || savedOwn.hash === hash)) {
+    host = host || savedOwn.host
+    port = opts.port || savedOwn.port || port
+    domain = opts.domain ?? savedOwn.domain ?? domain
+    login = login || savedOwn.login
+    cid = cid || savedOwn.cid
+    if (!forcePassword && !key) key = savedOwn.key
+  }
+
+  // 2) Если login/host ещё не известны — берём адрес и login из settings.sqlite официального клиента,
+  //    но НЕ подменяем свой уникальный AppEndpId (hash) на F4F93E... официального клиента.
+  if (!host || !login || (!key && !password)) {
+    const savedOfficial = loadOfficialCredentials(host)
+    if (savedOfficial) {
+      host = host || savedOfficial.host
+      port = opts.port || savedOfficial.port || port
+      login = login || savedOfficial.login
+      cid = cid || savedOfficial.cid
+      // Чужой key официального клиента пробуем только если нет ни своего key, ни пароля;
+      // свой уникальный AppEndpId (hash) НИКОГДА не подменяем на F4F93E... без явного useOfficialCredentials: true.
+      if (opts.useOfficialCredentials || (!key && !password)) {
+        key = key || savedOfficial.key
+        if (opts.useOfficialCredentials) hash = savedOfficial.hash
+      }
     }
   }
+
+  if (!host && login && String(login).includes('@')) {
+    host = String(login).split('@')[1].split('/')[0]
+  }
+  if (!host) {
+    return Promise.reject(new Error('Не указан адрес сервера (host) для нативного подключения 4307'))
+  }
+
   return new Promise((resolve, reject) => {
     const sock = net.connect(port, host)
     let settled = false
@@ -402,6 +545,7 @@ function connectAndLogin (opts = {}) {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (pendingPasswordTimer) clearTimeout(pendingPasswordTimer)
       if (err) { try { sock.destroy() } catch {} reject(err) } else resolve(val)
     }
     const timer = setTimeout(() => finish(new Error('Таймаут нативного входа 4307')), timeoutMs)
@@ -413,7 +557,10 @@ function connectAndLogin (opts = {}) {
     let session = null
     let nextId = 2
     let nextReqId = 1n
-    let sentLogin = false
+    let loginStage = 'idle' // 'idle' -> 'key' | 'password' | 'password_alt'
+    let serverAuthMethod = String(authMethod || '2')
+    let gotSetProps = Boolean(opts.authMethod)
+    let pendingPasswordTimer = null
     const reader = new vt.FrameReader()
     const listeners = new Set()
 
@@ -533,6 +680,17 @@ function connectAndLogin (opts = {}) {
         } else {
           const msgs = session.pushCiphertext(chunk)
           for (const m of msgs) {
+            if (m.service === 'NET_CONFIG' && m.data.Method === 'SetProps') {
+              if (m.data.authentication_method !== undefined) {
+                serverAuthMethod = String(m.data.authentication_method)
+              }
+              gotSetProps = true
+              if (pendingPasswordTimer) {
+                clearTimeout(pendingPasswordTimer)
+                pendingPasswordTimer = null
+                sendPasswordLogin(serverAuthMethod)
+              }
+            }
             for (const fn of listeners) {
               try { fn(m) } catch {}
             }
@@ -556,19 +714,87 @@ function connectAndLogin (opts = {}) {
         phase = 'session'
         // #1 CheckUserLoginStatus (id=2)
         sendApp(appMessage('CheckUserLoginStatus', {}), { service: 'AUTH', from: 'AUTH', id: 2 })
+        // #3 GetAppProps (id=4) — даёт SetProps с authentication_method ("1"=LDAP/raw, "2"=MD5), как в захвате #1..#4
+        if (password !== undefined && password !== null && password !== '' && !opts.authMethod) {
+          sendApp(appMessage('GetAppProps', [['ClientVersion', '8.3.2.154'], ['Name', appName]]), {
+            service: 'NET_CONFIG',
+            from: 'NET_CONFIG',
+            id: 4
+          })
+        }
         nextId = 5
+      }
+    }
+
+    function sendPasswordLogin (methodOverride) {
+      if (pendingPasswordTimer) {
+        clearTimeout(pendingPasswordTimer)
+        pendingPasswordTimer = null
+      }
+      const mth = methodOverride || serverAuthMethod || '2'
+      const loginMsg = buildLoginUserMessage({
+        login,
+        cid,
+        password,
+        authMethod: mth,
+        rawPassword,
+        passwordAlreadyHashed,
+        domain: '',
+        hash,
+        appName
+      })
+      sendApp(loginMsg, { service: 'AUTH', from: 'AUTH', id: nextId++ })
+    }
+
+    function schedulePasswordLogin () {
+      if (gotSetProps || rawPassword || passwordAlreadyHashed) {
+        sendPasswordLogin(serverAuthMethod)
+      } else {
+        pendingPasswordTimer = setTimeout(() => {
+          pendingPasswordTimer = null
+          sendPasswordLogin(serverAuthMethod)
+        }, 250)
       }
     }
 
     function handleAuthMsg (m) {
       if (m.data.Method !== 'UserLoggedin') return
       const res = m.data.Result
-      if (res === 2 && !sentLogin) {
-        sentLogin = true
-        const loginMsg = buildLoginUserMessage({ login, cid, key, password, hash, appName })
-        sendApp(loginMsg, { service: 'AUTH', from: 'AUTH', id: 5 })
-        nextId = 6
+      if (res === 2 && loginStage === 'idle') {
+        if (!forcePassword && key) {
+          loginStage = 'key'
+          const loginMsg = buildLoginUserMessage({ login, cid, key, domain: '', hash, appName })
+          sendApp(loginMsg, { service: 'AUTH', from: 'AUTH', id: nextId++ })
+        } else if (password !== undefined && password !== null && password !== '') {
+          loginStage = 'password'
+          schedulePasswordLogin()
+        } else {
+          finish(Object.assign(new Error('Нет ни cookie Key, ни пароля для входа UserLoggedin'), { result: 4 }))
+        }
+      } else if (res === 4 && loginStage === 'key' && password !== undefined && password !== null && password !== '') {
+        // Штатный переход из автологина по cookie в парольный вход mLogin (VS_LoginManager.cpp:104)
+        loginStage = 'password'
+        schedulePasswordLogin()
+      } else if (res === 3 && loginStage === 'password' && !rawPassword && !passwordAlreadyHashed && !opts.authMethod) {
+        // Если сервер работает в режиме authentication_method="1" (LDAP/AD, сырой пароль без MD5)
+        loginStage = 'password_alt'
+        const altMethod = serverAuthMethod === '1' ? '2' : '1'
+        sendPasswordLogin(altMethod)
       } else if (res === 0) {
+        const assignedUser = String(m.data.UserName || login || '')
+        const [pureLogin, newCid] = assignedUser.split('/')
+        const issuedKey = m.data.Key || key || ''
+        if (persistAuth && issuedKey && hash === ownEndpId) {
+          saveNativeAuth({
+            host,
+            port,
+            domain: domain || host,
+            login: pureLogin || login,
+            cid: newCid || cid,
+            key: issuedKey,
+            hash
+          }, authPath)
+        }
         finish(null, {
           socket: sock,
           session,
@@ -576,6 +802,9 @@ function connectAndLogin (opts = {}) {
           sessionId: serverPreamble.sessionId,
           certPem,
           result: 0,
+          loginMode: loginStage,
+          hash,
+          authKey: issuedKey,
           account: m.data,
           rawMessage: m,
           sendApp,
@@ -586,7 +815,7 @@ function connectAndLogin (opts = {}) {
           searchAddressBook,
           subscribePresence,
           onMessage,
-           isAlive: () => !sock.destroyed && sock.writable,
+          isAlive: () => !sock.destroyed && sock.writable,
           close: () => sock.destroy()
         })
       } else if (typeof res === 'number' && res !== 2) {
@@ -642,7 +871,11 @@ module.exports = {
   u64Buf,
   computeAppEndpId,
   getMacAppEndpId,
+  getNativeAuthPath,
+  loadNativeAuth,
+  saveNativeAuth,
   loadOfficialCredentials,
+  formatLoginPassword,
   buildLoginUserMessage,
   getLocalEndpoints,
   parsePeerEndpoints,

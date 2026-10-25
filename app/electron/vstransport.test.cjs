@@ -16,7 +16,7 @@ if (fs.existsSync(fxP)) {
   const fx = JSON.parse(fs.readFileSync(fxP, 'utf8'))
   assert.strictEqual(cp.toString('hex'), fx.client_preamble26, 'клиентская преамбула == захват')
   const sp = t.parseServerPreamble(Buffer.from(fx.server_preamble74, 'hex'))
-  assert.strictEqual(sp.realm, 'tc.t2.ru#vcs', 'realm из серверной преамбулы')
+  assert.ok(sp.realm && sp.realm.endsWith('#vcs'), 'realm из серверной преамбулы заканчивается на #vcs')
   assert.strictEqual(sp.sessionId.length, 32, 'ID сессии 32 hex-символа')
   if (fs.existsSync(frP)) {
     const r = new t.FrameReader(); r.push(fs.readFileSync(frP))

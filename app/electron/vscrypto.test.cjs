@@ -48,5 +48,9 @@ if (fs.existsSync(certP)) {
   assert.strictEqual(opened.family, 1); assert.strictEqual(opened.keysize, 16)
   assert.ok(opened.key1.equals(sealed.key1), 'key1 восстановлен через open')
   assert.ok(opened.key2.equals(sealed.key2), 'key2 восстановлен через open')
+  // Мутация RSA-блока обязана ронять openKeyExchange
+  const corrupted = Buffer.from(sealed.frame)
+  corrupted[20] ^= 0xff
+  assert.throws(() => vc.openKeyExchange(privateKey, corrupted), 'порча RSA-блока обязана бросать ошибку')
   console.log('OK: EVP_Seal-конверт — round-trip seal→open, кадр 332Б, два сессионных ключа восстановлены')
 }

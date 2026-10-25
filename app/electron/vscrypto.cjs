@@ -113,13 +113,38 @@ function sealKeyExchangeFromCert (certPem, opts) {
   return sealKeyExchange(pub, opts)
 }
 
+// Расшифровка RSA PKCS#1 v1.5 (EME-PKCS1-v1_5) для тестового стенда openKeyExchange.
+// В Node 20+/26 crypto.privateDecrypt запрещает RSA_PKCS1_PADDING (CVE-2023-46809),
+// тогда как клиентский crypto.publicEncrypt(RSA_PKCS1_PADDING) работает штатно.
+function rsaPrivateDecryptPkcs1 (privKey, ek) {
+  const keyObj = (privKey && typeof privKey.export === 'function') ? privKey : crypto.createPrivateKey(privKey)
+  const jwk = keyObj.export({ format: 'jwk' })
+  const toBig = b => BigInt('0x' + (b.length ? b.toString('hex') : '0'))
+  const n = toBig(Buffer.from(jwk.n, 'base64url'))
+  const d = toBig(Buffer.from(jwk.d, 'base64url'))
+  let base = toBig(ek) % n
+  let exp = d
+  let m = 1n
+  while (exp > 0n) {
+    if (exp & 1n) m = (m * base) % n
+    exp >>= 1n
+    base = (base * base) % n
+  }
+  const em = Buffer.from(m.toString(16).padStart(ek.length * 2, '0'), 'hex')
+  const sep = em.indexOf(0x00, 2)
+  if (em[0] !== 0x00 || em[1] !== 0x02 || sep < 10) {
+    throw new Error('Некорректный блок PKCS#1 v1.5 при RSA-расшифровке')
+  }
+  return em.slice(sep + 1)
+}
+
 // Зеркало EVP_Open — для round-trip теста (нужен приватный ключ, т.е. свой стенд-ключ).
 function openKeyExchange (privKey, frame) {
   const rsaLen = frame.readUInt32LE(8)
   const ek = frame.slice(12, 12 + rsaLen)
   const iv = frame.slice(12 + rsaLen, 12 + rsaLen + 16)
   const ct = frame.slice(12 + rsaLen + 16)
-  const ephKey = crypto.privateDecrypt({ key: privKey, padding: crypto.constants.RSA_PKCS1_PADDING }, ek)
+  const ephKey = rsaPrivateDecryptPkcs1(privKey, ek)
   const d = crypto.createDecipheriv(SEAL_AES, ephKey, iv)
   const inner = Buffer.concat([d.update(ct), d.final()])
   return parseInnerBlob(inner)

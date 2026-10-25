@@ -17,7 +17,7 @@
 | Модуль | Что делает | Проверка |
 |---|---|---|
 | `vsvariant.cjs` | кодек контейнера VS_Variant (адаптивный range-кодер) + разбор/сборка полей | `vsvariant.test.cjs`: совпал с Python-эталоном байт-в-байт (7/7), round-trip |
-| `vstransport.cjs` | преамбула `_VS_TRANSPORT_`, разбор ответа сервера, чтение кадров, декод VS_Variant | `vstransport.test.cjs`: сверено с живым захватом tc.t2.ru (декодирует сертификат сервера) |
+| `vstransport.cjs` | преамбула `_VS_TRANSPORT_`, разбор ответа сервера, чтение кадров, декод VS_Variant | `vstransport.test.cjs`: сверено с живым захватом (декодирует сертификат сервера) |
 | `vscrypto.cjs` | нонс v2rnd, вывод ключа `HASH(v1_buf‖v2rnd)`, AES-128-ECB (`VSSymmetricCrypt`), RSA из сертификата | `vscrypto.test.cjs`: порядок хэша, round-trip AES, RSA из реального серта (rsa-2048) |
 
 Формат кадра: `[flen:u32 LE][dsize:u32 LE][range-coded: flen-4 байт]`.
@@ -42,8 +42,8 @@
 
 ### Что подтверждено на живом стенде (24.10.2026)
 
-Живой прогон против tc.t2.ru:4307 проходит НАСКВОЗЬ до приёма ключей:
-преамбула ✓ → серверная преамбула (realm tc.t2.ru#vcs) ✓ → сертификат rsa-2048 ✓
+Живой прогон против сервера :4307 проходит НАСКВОЗЬ до приёма ключей:
+преамбула ✓ → серверная преамбула (realm `<server>#vcs`) ✓ → сертификат rsa-2048 ✓
 → **EVP_Seal принят сервером** ✓ (соединение остаётся живым ≥10с после seal —
 сервер ждёт второе, сессионное сообщение; будь seal неверным, был бы FIN).
 
@@ -90,7 +90,7 @@ OpenSSL + движок ГОСТ (ГОСТ Р 34.10/34.11-2012 Стрибог, Г
 совпадает со спекой). Семейство шифра согласуется (`family`: 1=AES, 0xc=ГОСТ).
 Прямого `EVP_PKEY_encrypt` в коде нет — RSA делается внутри `EVP_SealInit`.
 Поправка: режим `key=HASH(v1_buf‖v2rnd)` + подпись — это ДРУГОЙ (симметричный)
-режим рукопожатия, к живому tc.t2.ru (RSA-режим) не относится.
+режим рукопожатия, к живому серверу (RSA-режим) не относится.
 ```
 
 ## Что осталось (строго с проверкой на живом стенде, не вслепую)
@@ -208,7 +208,7 @@ LIVE-PENDING (финальная байт-сверка на стенде, где
 
 ### Живой тест сессии (24.10.2026) — хэндшейк ✓, сессионное сообщение пока не принято
 
-Прогон против tc.t2.ru:4307 (`~/Documents/TrueConf-RE/cap/live_session.cjs`,
+Прогон против сервера :4307 (`~/Documents/TrueConf-RE/cap/live_session.cjs`,
 `login_probe.cjs`): преамбула → cert → **EVP_Seal проходит** (сервер жив, не FIN).
 Затем шлю сессионное сообщение конвертом `VS_FixedPartMessage` + AES-PKCS7:
 - `GetAppProps`→NET_CONFIG и `LoginUser`→AUTH (с заведомо чужим логином);
@@ -236,8 +236,8 @@ decrypt-in-place (@0x1009599b0/@0x100159920).
 ### Прорыв метода: прозрачный байт-релей
 MITM упирался в проверку сертификата. Решение — **прозрачный релей** (не MITM):
 `~/Documents/TrueConf-RE/cap/relay.cjs` слушает 127.0.0.1:4307, перегоняет байты
-на реальный 193.138.148.39:4307. Клиент видит НАСТОЯЩИЙ серт → валидация проходит,
-вход реально происходит. Редирект — через `/etc/hosts` (`127.0.0.1 tc.t2.ru`); ни
+на реальный сервер :4307. Клиент видит НАСТОЯЩИЙ серт → валидация проходит,
+вход реально происходит. Редирект — через `/etc/hosts`; ни
 `ServerAddress`, ни hosts-кэш в serverlist.sqlite НЕ держат (клиент резолвит DNS
 заново и переписывает ServerAddress). Захват — `cap/relaycap/connN.{c2s,s2c}.bin`.
 
@@ -249,7 +249,7 @@ MITM упирался в проверку сертификата. Решение
 - Серверный хэндшейк = ТОЛЬКО кадр сертификата (3 поля: `Certificate Chain`,
   `Parent Certificate`, `Certificate`). **Нет v1_buf/v2rnd** (это другой путь —
   FUN_100965490/FUN_100964580, здесь не задействован).
-- Три серта: `Certificate`=лист сервера **CN=tc.t2.ru#vcs** (на него и делаем
+- Три серта: `Certificate`=лист сервера **CN=`<server>#vcs`** (на него и делаем
   seal), `Certificate Chain`/`Parent Certificate`=промежуточный reg.trueconf.com#regs.
 - **Seal реального клиента = 332Б, ekLen=256 (RSA-2048), ctLen=48 → ks=16 →
   family=1 (AES-128)** — ровно как у меня.
@@ -333,17 +333,32 @@ tx-ключа, pos0/pos1 ∈ {пусто, sessionId, login}, id ∈ {0,1}, с Ha
 NET_CONFIG (UpdateConfiguration/GetAppProps) можно пропустить.
 
 **Поля LoginUser:** Method, clientChatVersion="3", chatCapabilities=JSON(7),
-Login="<login>/<cid>", Key=cookie, UserDefaultDomain="", Hash=<32hex AppEndpId>,
-ClientType=тип1 u32 **0**, AppName="TrueConf OS X".
-Конверт: from=service="AUTH", connId=sessionId(или AppEndpId). Коды Result: 2=ждёт, 0=успех, 4=ошибка.
+Login="<login>/<cid>", Key=cookie (или Password=<пароль> + Key=""), UserDefaultDomain="",
+Hash=<32hex AppEndpId>, ClientType=тип1 u32 **0**, AppName="TrueConf OS X".
+Конверт: from=service="AUTH", connId=sessionId(или AppEndpId).
+Коды `Result` (в `UserLoggedin` / `loginResponse`):
+- `0` — успех (возвращаются реквизиты аккаунта и `Session`-токен);
+- `1` — пользователь уже вошёл;
+- `2` — сервер готов после `CheckUserLoginStatus` и ждёт `LoginUser`;
+- `3` — неверный логин или пароль (`Password`);
+- `4` — отказ при входе по токену `Key` (недействительный/чужой `Key`, например от WebSocket, или несовпадение `Hash` / `AppName`);
+- `5` — превышен лимит лицензий; `6` — учётная запись отключена.
 
 **Формула `Hash` (`AppEndpId`, вскрыта по `FUN_1002a46c0` → `FUN_100355e50` @ `0x100355e50`):**
 В `settings.sqlite` (таблица `logins`: `Domain, Login, Key`) `Hash` не хранится — клиент вычисляет его детерминированно при старте:
 - `h1 = MD5_UPPER(IOPlatformSerialNumber + IOPlatformUUID)` (`0x101507920`)
 - `h2 = MD5_UPPER(NSUserName)` (`0x1015078a0`)
-- `h3 = ""` (пустая строка)
+- `h3 = extra ? MD5_UPPER(extra) : ""` (`extra = "TrueConfX"` для собственного эндпоинта `TrueConfX`, `""` у официального клиента)
 - `h4 = MD5_UPPER("TrueConf OS X")`
-- `Hash = MD5_UPPER(h1 + h2 + h3 + h4)` (на маке стенда совпало байт-в-байт с логом официального клиента).
+- `Hash = MD5_UPPER(h1 + h2 + h3 + h4)`.
+Самостоятельный клиент `TrueConfX` передаёт `extra = "TrueConfX"`, поэтому его `AppEndpId` уникален и не конфликтует с эндпоинтом официального клиента.
+
+**Парольный вход `mLogin` (`VS_LoginManager.cpp:104`, `FUN_1003149e0` @ `0x1003149e0` → `FUN_100315170` → `FUN_100315280`):**
+- Перед `LoginUser` клиент отправляет `GetAppProps` (`id=4`, сервис `NET_CONFIG`) и получает `SetProps` со свойством `authentication_method` (`FUN_10019a4b0` → `0x1001b07e0`, дефолт `"2"`, флаг `*(uint8_t*)(serverObj + 0xc8) = (authentication_method[0] != '1')`):
+  - при `authentication_method != "1"` (`"2"` — внутренние пользователи TrueConf) вызывается `FUN_1001b0fd0(password)` (`0x1001b0fd0`, `MD5` + `"%02X"` @ `0x107a46b93`) → `Password = MD5_UPPER(password)`;
+  - при `authentication_method == "1"` (LDAP / Active Directory) `FUN_1001b0fd0` не вызывается → `Password = <сырой пароль>`.
+- В строителе `FUN_100315280` при парольном входе (`loginType = 2`, ветка `!= 3`) записываются оба поля подряд: `Password` (тип 3) и следом пустой `Key = ""` (тип 3, на проводе `len=1, 0x00`).
+- В ответе `UserLoggedin` (`Result = 0`, `ParseUserLoggedIn` @ `0x1003163f7..0x1003167da`) сервер выдаёт новый cookie в поле `Key`, привязанный к нашему `AppEndpId`. `TrueConfX` сохраняет его в `native-auth.json` и последующие сессии открывает автологином по своему `Key` (при `Result=4` прозрачно переходя на вход по паролю).
 
 **Потоковая кадровка входящих конвертов (`SessionReader`):**
 Каждый конверт `VS_FixedPartMessage` длиной `plainLen = hdrLen + payloadLen` шифруется отдельным вызовом `VS_SymmetricCrypt::encrypt` (@0x100966910) с PKCS7, поэтому на проводе занимает `wireLen = (Math.floor(plainLen / 16) + 1) * 16` байт. Приёмник чистит блок 0 ECB, читает `hdrLen@2` и `payloadLen@5..7`, дожидается `wireLen` байт в TCP-буфере и штатно снимает PKCS7.
@@ -354,8 +369,8 @@ ClientType=тип1 u32 **0**, AppName="TrueConf OS X".
 - `ABOOK`: `SearchAddressBook {Query:"", Hash:u32, AddressBook:u32(15|19|1|2), CallId, E-Mail, Name}`
 - `Time`: `GetCurrentTime {Seq: u64(type=5)}` (`from="CHATV2"`).
 
-**Сервис `TORRENT` и `TrackerAnnounce` (вскрыто по `FUN_102c1ee70` / `FUN_102c1ff60` и проверено на живом `tc.t2.ru:4307`):**
-- Конверт `VS_FixedPartMessage`: `from="TORRENT"`, `service="TORRENT"`, `to=""`, `extra="<host>#vcs"` (из параметра `&tctr=` magnet-ссылки или `tc_trackers` в `SetProps`, например `"tc.t2.ru#vcs"`, `"tc3.t2.ru#vcs"`).
+**Сервис `TORRENT` и `TrackerAnnounce` (вскрыто по `FUN_102c1ee70` / `FUN_102c1ff60` и проверено на живом сервере :4307):**
+- Конверт `VS_FixedPartMessage`: `from="TORRENT"`, `service="TORRENT"`, `to=""`, `extra="<host>#vcs"` (из параметра `&tctr=` magnet-ссылки или `tc_trackers` в `SetProps`, например `"<server>#vcs"`).
 - Поля исходящего запроса (`FUN_102c1ee70`, строго по порядку):
   1. `Method` (тип 3) = `"TrackerAnnounce"`
   2. `TorrentInfoHash` (тип 3) = 40-символьный **lowercase** hex (`FUN_102c83a60`)
