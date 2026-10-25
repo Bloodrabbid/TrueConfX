@@ -35,10 +35,11 @@ function pstr (s) {
 //  off 5..7      payloadLen-1 (24 бита LE)
 //  off 8   u32   id
 //  off 0xc u32   timeout/seq
-//  off 0x10      9 pascal-строк: from, connId, "54", "", service, "", to, "", extra
+//  off 0x10      9 pascal-строк (сверено по FUN_100224ed0→FUN_1001c8240):
+//                connId(uVar8), from(mgr+0x10), "54", "", service, "", to, "", extra
 //  off hdrLen    payload (= сериализованный контейнер [dsize][coded])
 function buildFixedPartMessage (payload, { service, from = '', connId = '', to = '', extra = '', id = 0, timeout = 0, flags = 1 } = {}) {
-  const strs = [from, connId, TAG, '', service || '', '', to, '', extra].map(pstr)
+  const strs = [connId, from, TAG, '', service || '', '', to, '', extra].map(pstr)
   const strTotal = strs.reduce((n, b) => n + b.length, 0)
   const headerLen = 0x10 + strTotal
   const buf = Buffer.alloc(headerLen + payload.length)
@@ -62,10 +63,17 @@ function buildFixedPartMessage (payload, { service, from = '', connId = '', to =
 function finalizeChecksums (buf) {
   const hdrLen = buf.readUInt16LE(2)
   const payloadM1 = buf[5] | (buf[6] << 8) | (buf[7] << 16)
-  // cs1: off = hdrLen, шаг 0x10, пока off <= payloadM1; seed 0xee
-  let off = hdrLen; let u = 0xee; let v = 0
-  do { v = ((u & 0xff) + buf[off]) & 0xff; u = off + v; off += 0x10 } while (off <= payloadM1)
-  buf[4] = (v + off - 0x10) & 0xff
+  // cs1: off = hdrLen, шаг 0x10, пока off <= payloadM1; seed 0xee.
+  // Если payloadM1 < hdrLen (крошечный payload) — оригинал (FUN_1001c8570) цикл НЕ
+  // крутит и ставит byte4 = 0xee. Для логина payloadM1 >> hdrLen, так что цикл идёт.
+  let u, v
+  if (payloadM1 < hdrLen) {
+    buf[4] = 0xee
+  } else {
+    let off = hdrLen; u = 0xee; v = 0
+    do { v = ((u & 0xff) + buf[off]) & 0xff; u = off + v; off += 0x10 } while (off <= payloadM1)
+    buf[4] = (v + off - 0x10) & 0xff
+  }
   // cs2: off 2..hdrLen; seed (byte0 & 0xdf)+0xac; timeout обнулён
   const savedT = buf.readUInt32LE(12); buf.writeUInt32LE(0, 12)
   u = ((buf[0] & 0xdf) + 0xac) & 0xff; v = u & 0xff; let i = 2
@@ -88,7 +96,7 @@ function parseFixedPartMessage (buf) {
   }
   const payload = buf.slice(headerLen, headerLen + payloadLen)
   const fields = vv.deserialize(payload) // [dsize][coded] → поля VS_Variant
-  return { from: strs[0], connId: strs[1], tag: strs[2], service: strs[4], to: strs[6], fields }
+  return { connId: strs[0], from: strs[1], tag: strs[2], service: strs[4], to: strs[6], fields }
 }
 
 class VSSession {

@@ -228,3 +228,114 @@ LIVE-PENDING (финальная байт-сверка на стенде, где
 Приёмник и отправитель — виртуальные (vtable-диспетчеризация), статически не
 добиты; зайти через observe на живом рантайме или через точки, где зовётся
 decrypt-in-place (@0x1009599b0/@0x100159920).
+
+---
+
+## Сессия 2 (24.10.2026) — прозрачный релей + полная байтовая сверка
+
+### Прорыв метода: прозрачный байт-релей
+MITM упирался в проверку сертификата. Решение — **прозрачный релей** (не MITM):
+`~/Documents/TrueConf-RE/cap/relay.cjs` слушает 127.0.0.1:4307, перегоняет байты
+на реальный 193.138.148.39:4307. Клиент видит НАСТОЯЩИЙ серт → валидация проходит,
+вход реально происходит. Редирект — через `/etc/hosts` (`127.0.0.1 tc.t2.ru`); ни
+`ServerAddress`, ни hosts-кэш в serverlist.sqlite НЕ держат (клиент резолвит DNS
+заново и переписывает ServerAddress). Захват — `cap/relaycap/connN.{c2s,s2c}.bin`.
+
+### Что ПОДТВЕРЖДЕНО вживую захватом реального клиента (conn2)
+- Клиент сперва пробует **TLS** (ClientHello `16 03 01…`), сервер закрывает →
+  фолбэк на нативный `_VS_TRANSPORT_`.
+- **Преамбула клиента байт-в-байт равна `buildClientPreamble()`**
+  (`5f56535f5452414e53504f52545f000099ef2b00000000000001`).
+- Серверный хэндшейк = ТОЛЬКО кадр сертификата (3 поля: `Certificate Chain`,
+  `Parent Certificate`, `Certificate`). **Нет v1_buf/v2rnd** (это другой путь —
+  FUN_100965490/FUN_100964580, здесь не задействован).
+- Три серта: `Certificate`=лист сервера **CN=tc.t2.ru#vcs** (на него и делаем
+  seal), `Certificate Chain`/`Parent Certificate`=промежуточный reg.trueconf.com#regs.
+- **Seal реального клиента = 332Б, ekLen=256 (RSA-2048), ctLen=48 → ks=16 →
+  family=1 (AES-128)** — ровно как у меня.
+
+### Крипто-стек — ПОЛНОСТЬЮ грунтован по декомпилятору (байт-точно)
+- Кадр seal (FUN_100963950): `[flen=ekLen+ctLen+0x18][type=1][rsaLen=ekLen][ek][IV:16][ct]`.
+- inner-blob (FUN_100963950 стр.182-188): `[family u32][ks u32][key1 ks][ks u32][key2 ks]`.
+- Шифр конверта seal = EVP_Seal, RSA-PKCS1 + **AES-256-CBC** (family 0xb v3,
+  nid 427, прочитал структуру EVP_CIPHER по &DAT_107d6fc88).
+- Сессия: setCipher(FUN_1009664a0) family=1 v2 → **AES-128-ECB** (nid 418, iv=0,
+  &DAT_107d6f398); setKey(FUN_100966750) ставит ключ как есть (IV=NULL), ключ — сырой
+  key1/key2 из blob (не деривируется); encrypt(FUN_100966910) **PKCS7**.
+- Сессионный пакет на проводе = сырой AES-ECB(конверт), БЕЗ рамки/длины
+  (самоописывается заголовком конверта). FUN_100159870 шифрует конверт как есть.
+
+### Конверт VS_FixedPartMessage — ПОЛНОСТЬЮ грунтован
+- Строитель FUN_1001c9e70: byte0=`0x81|(flags&3)<<6`, **bytes5-7=payloadLen-1**,
+  bytes2-3=hdrLen, id@8, timeout@0xc, 9 pascal-строк `[len][data][0x00]`,
+  затем payload@hdrLen, затем суммы.
+- **Payload = `[dsize:u32][range-coded]`** (FUN_100955e80 пишет dsize первым) — мой
+  `vv.serialize` верен.
+- Обе суммы (FUN_1001c8570) сверены скалярно с моим `finalizeChecksums`:
+  cs1→byte4 (off=hdrLen шаг16 пока ≤payloadLen-1, seed 0xee; если payloadLen-1<hdrLen
+  → byte4=0xee), cs2→byte1 (off 2..hdrLen, seed `(byte0&0xdf)+0xac`, timeout обнулён).
+- **Реальный порядок 9 строк** (FUN_100224ed0→FUN_1001c8240): `[connId-ish(uVar8),
+  from(mgr+0x10), "54", "", service, "", to, "", extra]`. Для логина to/extra пусты.
+  (У меня в builder pos0=from,pos1=connId — семантика сдвинута, но на пустых значениях
+  байты те же; перебор пустых/sessionId не разблокировал.)
+- Сервис логина = **"AUTH"** (не "AUTH_SRV"); имена полей сверены по длинам.
+
+### Логин — грунтован (FUN_100315280 + лог клиента)
+- Поля: `Method=LoginUser, [clientChatVersion], chatCapabilities, Login,
+  {Key(токен) | Password+Key=""}, [UserDefaultDomain], [Hash], ClientType(u32), AppName`.
+  **Нет поля credentialsType** (ветка по внутреннему типу).
+- **`Hash` = AppEndpId** (FUN_1002a46c0): самоназначаемый ID эндпоинта
+  (hwid+appname, иначе случайный `%x%x%x` из time/rand/pid) — НЕ auth-ответ, любой.
+- Реальный вход — **токеном** (тип 2, автологин по cookie): из лога
+  `LOGIN: <login>/<cid> <token> <AppEndpId> 2`; токен хранится в
+  settings.sqlite `logins` и `SetCookie`.
+- `TrSession ver 2`→(после входа)`ver 3`. Проверка `Check login declined by trs
+  version (3/2)` (FUN_1003456f0) — КЛИЕНТ сверяет версию в ОТВЕТЕ сервера, не то, что шлём.
+
+### Блокер (НЕ вскрыт): сервер молча роняет первый сессионный пакет
+Перебрано вживую (все молчат): пароль-логин (валидный пароль) и токен-логин, оба
+tx-ключа, pos0/pos1 ∈ {пусто, sessionId, login}, id ∈ {0,1}, с Hash и без,
+транспортный HELLO (`HELLO VERSION MIN=3.0 MAX=3.0\n`) шифрованный и плейнтекстом
+(HELLO — похоже UDP-концепт: рядом строки "udp test get invalid hello hdr").
+Всё крипто/конверт/поля выверены байт-в-байт, но ответа нет и соединение не рвётся.
+Причину НЕ вскрыть доступными методами: расшифровать реальную сессию нельзя (ключи
+запечатаны RSA на сервер, приватного ключа нет); подцепить hardened+sandbox клиент
+нельзя (lldb/frida — flags=0x10000 runtime, нет get-task-allow); сервер не даёт
+обратной связи.
+
+### Варианты продолжения (нужна новая возможность)
+1. Снять **wss-JSON веб-клиента** (тот же логический протокол, читаемые имена/порядок
+   методов) через mitmproxy на 443 — покажет точную последовательность первых сообщений.
+2. Хук клиента при отключённом SIP (или не-hardened сборка) → снять сессионные ключи
+   из памяти или brkpt на encrypt(FUN_100966910) → plaintext первого пакета.
+3. Добить vtable-диспетчеризацию приёмного парсера сессии на живом рантайме (observe).
+
+### Скрипты (cap/)
+`relay.cjs` (прозрачный релей), `dump_handshake.cjs` (поля серверного хэндшейка),
+`decode_capture.cjs` (декод plaintext-кадров захвата), `env_test.cjs`/`final_login.cjs`
+/`hello_test.cjs` (перебор раскладок/логина/HELLO вживую). Декомпилят — `../TrueConf-RE/decomp/`.
+
+## РЕШЕНО (25.10.2026): блокер снят, вход работает end-to-end
+
+Сервер молчал из-за **бага сериализатора VS_Variant**: строки типа 3 на проводе
+завершаются нулём, и u32-длина включает этот ноль (пустая `""` → len=1, один
+`0x00`; типы 1 и 4 — без нуля). `serialize()` писал длину без нуля → каждая строка
+на 1 байт короче → сервер молча ронял пакет. Исправлено: `serialize` добавляет
+`0x00` (len+1), `parseContainer` его снимает (симметрично).
+
+Доказательство (хук официального клиента, lldb на `VS_SymmetricCrypt::encrypt`,
+копия переподписана ad-hoc с get-task-allow): собранные с нуля `CheckUserLoginStatus`
+и `LoginUser` стали **байт-в-байт** равны захваченному plaintext оф. клиента.
+
+**Последовательность входа** (grounded): `CheckUserLoginStatus`→AUTH (id=2, триггер
+серверного Check) → сервер отвечает (Result=2) → `LoginUser`→AUTH (id=5) → сервер
+`UserLoggedin Result=0` + полный аккаунт и Session-токен. **tx=key1**, rx=key2.
+NET_CONFIG (UpdateConfiguration/GetAppProps) можно пропустить.
+
+**Поля LoginUser:** Method, clientChatVersion="3", chatCapabilities=JSON(7),
+Login="<login>/<cid>", Key=cookie, UserDefaultDomain="", Hash=<32hex статичный
+автологин-реквизит из settings.sqlite>, ClientType=тип1 u32 **0**, AppName="TrueConf OS X".
+Конверт: from=service="AUTH", connId=AppEndpId. Коды Result: 2=ждёт, 0=успех, 4=ошибка.
+
+Пробники (вне репо): `/tmp/tc_fresh_real.cjs` (сборка с нуля, Result=0),
+`/tmp/tc_replay.cjs` (реплей), `/tmp/tc_hook.py`+`/tmp/tc_hook_out.txt` (хук+захват).

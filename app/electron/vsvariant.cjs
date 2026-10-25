@@ -163,7 +163,11 @@ function parseContainer (buf) {
     if (t === 0) { val = Buffer.alloc(0); step = 0 } else if (t === 1) { val = buf.slice(q, q + 4); step = 4 } else if (t === 2 || t === 5) { val = buf.slice(q, q + 8); step = 8 } else if (t === 3 || t === 4) {
       if (q + 4 > n) break
       const ln = buf.readUInt32LE(q)
-      val = buf.slice(q + 4, q + 4 + ln); step = 4 + ln
+      const raw = buf.slice(q + 4, q + 4 + ln)
+      // Тип 3 (строка) на проводе завершается нулём, длина его включает —
+      // снимаем (симметрично serialize). Тип 4 (байты) отдаём как есть.
+      val = (t === 3 && ln > 0 && raw[ln - 1] === 0) ? raw.slice(0, ln - 1) : raw
+      step = 4 + ln
     } else break
     fields.push({ name, type: t, value: val })
     p = q + step
@@ -178,7 +182,10 @@ function serialize (fields) {
     const nameB = Buffer.from(f.name, 'latin1')
     parts.push(Buffer.from([nameB.length + 1]), nameB, Buffer.from([0, f.type]))
     const v = f.value || Buffer.alloc(0)
-    if (f.type === 3 || f.type === 4) { const h = Buffer.alloc(4); h.writeUInt32LE(v.length); parts.push(h, v) } else if (f.type !== 0) parts.push(v)
+    // Тип 3 (строка) на проводе завершается нулём, u32-длина включает ноль
+    // (grounded: захват CheckUserLoginStatus/LoginUser — все строки, включая
+    // пустые, оканчиваются 0x00; пустая "" → len=1). Тип 4 (байты) — без нуля.
+    if (f.type === 3) { const h = Buffer.alloc(4); h.writeUInt32LE(v.length + 1); parts.push(h, v, Buffer.from([0])) } else if (f.type === 4) { const h = Buffer.alloc(4); h.writeUInt32LE(v.length); parts.push(h, v) } else if (f.type !== 0) parts.push(v)
   }
   const raw = Buffer.concat(parts)
   const sz = Buffer.alloc(4); sz.writeUInt32LE(raw.length)
