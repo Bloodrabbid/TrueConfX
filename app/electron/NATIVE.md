@@ -333,9 +333,45 @@ tx-ключа, pos0/pos1 ∈ {пусто, sessionId, login}, id ∈ {0,1}, с Ha
 NET_CONFIG (UpdateConfiguration/GetAppProps) можно пропустить.
 
 **Поля LoginUser:** Method, clientChatVersion="3", chatCapabilities=JSON(7),
-Login="<login>/<cid>", Key=cookie, UserDefaultDomain="", Hash=<32hex статичный
-автологин-реквизит из settings.sqlite>, ClientType=тип1 u32 **0**, AppName="TrueConf OS X".
-Конверт: from=service="AUTH", connId=AppEndpId. Коды Result: 2=ждёт, 0=успех, 4=ошибка.
+Login="<login>/<cid>", Key=cookie, UserDefaultDomain="", Hash=<32hex AppEndpId>,
+ClientType=тип1 u32 **0**, AppName="TrueConf OS X".
+Конверт: from=service="AUTH", connId=sessionId(или AppEndpId). Коды Result: 2=ждёт, 0=успех, 4=ошибка.
 
-Пробники (вне репо): `/tmp/tc_fresh_real.cjs` (сборка с нуля, Result=0),
-`/tmp/tc_replay.cjs` (реплей), `/tmp/tc_hook.py`+`/tmp/tc_hook_out.txt` (хук+захват).
+**Формула `Hash` (`AppEndpId`, вскрыта по `FUN_1002a46c0` → `FUN_100355e50` @ `0x100355e50`):**
+В `settings.sqlite` (таблица `logins`: `Domain, Login, Key`) `Hash` не хранится — клиент вычисляет его детерминированно при старте:
+- `h1 = MD5_UPPER(IOPlatformSerialNumber + IOPlatformUUID)` (`0x101507920`)
+- `h2 = MD5_UPPER(NSUserName)` (`0x1015078a0`)
+- `h3 = ""` (пустая строка)
+- `h4 = MD5_UPPER("TrueConf OS X")`
+- `Hash = MD5_UPPER(h1 + h2 + h3 + h4)` (на маке стенда совпало байт-в-байт с логом официального клиента).
+
+**Потоковая кадровка входящих конвертов (`SessionReader`):**
+Каждый конверт `VS_FixedPartMessage` длиной `plainLen = hdrLen + payloadLen` шифруется отдельным вызовом `VS_SymmetricCrypt::encrypt` (@0x100966910) с PKCS7, поэтому на проводе занимает `wireLen = (Math.floor(plainLen / 16) + 1) * 16` байт. Приёмник чистит блок 0 ECB, читает `hdrLen@2` и `payloadLen@5..7`, дожидается `wireLen` байт в TCP-буфере и штатно снимает PKCS7.
+
+**После входа (раскодировано из `cap/tc_hook_out.txt`, пакеты #5..#18):**
+- `NET_CONFIG`: `UpdateConfiguration {IPConfig}`, `GetAppProps {ClientVersion:"8.3.2.154", Name:"TrueConf OS X"}`, `SetProps {Hash, Name, Property, ...}`
+- `PRESENCE`: `UpdateStatus {UserPresStatus: u32(1), [ExtSt: вложенный VS_Variant контейнер]}`, `Subscribe {Cause: u32(1), CallId, CallId, ...}` (`from="ABOOK"`)
+- `ABOOK`: `SearchAddressBook {Query:"", Hash:u32, AddressBook:u32(15|19|1|2), CallId, E-Mail, Name}`
+- `Time`: `GetCurrentTime {Seq: u64(type=5)}` (`from="CHATV2"`).
+
+**Сервис `TORRENT` и `TrackerAnnounce` (вскрыто по `FUN_102c1ee70` / `FUN_102c1ff60` и проверено на живом `tc.t2.ru:4307`):**
+- Конверт `VS_FixedPartMessage`: `from="TORRENT"`, `service="TORRENT"`, `to=""`, `extra="<host>#vcs"` (из параметра `&tctr=` magnet-ссылки или `tc_trackers` в `SetProps`, например `"tc.t2.ru#vcs"`, `"tc3.t2.ru#vcs"`).
+- Поля исходящего запроса (`FUN_102c1ee70`, строго по порядку):
+  1. `Method` (тип 3) = `"TrackerAnnounce"`
+  2. `TorrentInfoHash` (тип 3) = 40-символьный **lowercase** hex (`FUN_102c83a60`)
+  3. `TorrentPeerId` (тип 3) = 20-байтовый ASCII `peer_id` (`-LT1270-` + 12 hex символов; обязательно тот же самый `peer_id`, который затем шлётся в BitTorrent handshake внутри MSE!)
+  4. `TorrentPeerEndpoints` (тип 3) = список своих `ip:port;` через точку с запятой (`"192.168.1.114:55111;"`)
+  5. `AnnounceEvent` (тип 1 `u32`) = `1` (`started`), `2` (`completed`), `3` (`stopped`), `4` (`none`)
+  6. `AnnounceRequestId` (тип 5 `u64`) = `BigInt` ID запроса.
+- Поля ответа сервера (`FUN_102c1ff60`):
+  - `Method` = `"TrackerAnnounce"`
+  - `TorrentInfoHash` = 40-символьный hex
+  - `AnnounceInterval` (тип 5 `u64`) = интервал в секундах (`60n`)
+  - `PeersListParam` (тип 3) = строка пиров `"ip:port;ip:port;..."`
+  - `BCPeersListParam` (тип 3) = строка BC-пиров
+  - `AnnounceRequestId` (тип 5 `u64`)
+  - `NotificationReason` (тип 1 `u32`).
+- Встроено в `vssession.cjs` (`buildTrackerAnnounceMessage`, `parseTrackerAnnounceResponse`, `trackerAnnounce`, `ensureNativeSession`), `p2p.cjs` (`peersFromTracker` через нативный `TrackerAnnounce` + единый 20-байтовый `peerId` в `download`) и `main.cjs` / `preload.cjs`.
+
+Пробники (в `../TrueConf-RE/cap/`): `tc_fresh_real.cjs` (сборка с нуля, Result=0),
+`tc_replay.cjs` (реплей), `tc_hook.py`+`tc_hook_out.txt` (хук+захват).

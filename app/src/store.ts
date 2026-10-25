@@ -182,6 +182,7 @@ export const useStore = create<State>((set, get) => ({
       const account = await client.login(login.includes('@') ? login : `${login}@${host}`, password)
       get().set({ server, lastLogin: login })
       if (remember) await window.native?.saveCredentials?.(server, login, password)
+      window.native?.nativeConnect?.({ server: host, login: account.trueconfId, cid: account.cid, key: account.key, password })
       set({ client, account, connecting: false })
       // REST нужен для созвонов; без него чаты работают, поэтому ошибку не показываем.
       const rest = new TCRest(host)
@@ -580,6 +581,7 @@ async function reconnect() {
       const account = await client.login(creds.login.includes('@') ? creds.login : `${creds.login}@${host}`, creds.password)
       if (!reconnecting) { client.logout(); return }
       reconnecting = false
+      window.native?.nativeConnect?.({ server: host, login: account.trueconfId, cid: account.cid, key: account.key, password: creds.password })
       wireClient(client)
       st.setState({ client, account, offline: false })
       const rest = new TCRest(host)

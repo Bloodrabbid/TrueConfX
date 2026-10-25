@@ -14,5 +14,8 @@ interface Window {
     pickScreen: (id: string | null) => void
     saveCredentials: (server: string, login: string, password: string) => Promise<void>
     loadCredentials: () => Promise<{ server: string; login: string; password: string } | null>
+    nativeConnect?: (opts?: { server?: string; login?: string; cid?: string; key?: string; password?: string }) => Promise<{ ok: boolean }>
+    nativeStatus?: () => Promise<{ connected: boolean; realm?: string; sessionId?: string; account?: any }>
+    onNativeEvent?: (cb: (ev: { id: number; from: string; service: string; to: string; extra: string; data: any }) => void) => () => void
   }
 }

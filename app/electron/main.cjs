@@ -3,6 +3,7 @@ const { app, BrowserWindow, session, desktopCapturer, shell, Notification, ipcMa
 const fs = require('fs')
 const path = require('path')
 const p2p = require('./p2p.cjs')
+const vs = require('./vssession.cjs')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
 // Отладка через Chrome DevTools Protocol: TCX_DEBUG=9229 npx electron .
@@ -122,15 +123,63 @@ app.whenReady().then(() => {
   })
   // Логин и пароль храним зашифрованными системным хранилищем ключей (Keychain/DPAPI/libsecret).
   const credFile = path.join(app.getPath('userData'), 'credentials.bin')
+  const startBackgroundNativeSession = (opts = {}) => {
+    if (opts.server || opts.login || opts.password || opts.key) {
+      const host = String(opts.server || 'tc.t2.ru').split(':')[0]
+      vs.configureNativeSession({
+        host,
+        login: opts.login ? (opts.login.includes('@') ? opts.login : `${opts.login}@${host}`) : undefined,
+        cid: opts.cid,
+        key: opts.key,
+        password: opts.password
+      })
+    }
+    return vs.ensureNativeSession().then(conn => {
+      if (!conn._tcxBound) {
+        conn._tcxBound = true
+        conn.onMessage(m => {
+          win?.webContents.send('native-event', {
+            id: m.id,
+            from: m.from,
+            service: m.service,
+            to: m.to,
+            extra: m.extra,
+            data: m.data
+          })
+        })
+        try { conn.updateStatus(1) } catch {}
+      }
+      return conn
+    }).catch(() => null)
+  }
+
   ipcMain.handle('save-credentials', (_e, server, login, password) => {
     if (!login) { fs.rmSync(credFile, { force: true }); return }
+    startBackgroundNativeSession({ server, login, password })
     if (!safeStorage.isEncryptionAvailable()) return
     fs.writeFileSync(credFile, safeStorage.encryptString(JSON.stringify({ server, login, password })))
   })
   ipcMain.handle('load-credentials', () => {
-    try { return JSON.parse(safeStorage.decryptString(fs.readFileSync(credFile))) } catch { return null }
+    try {
+      const creds = JSON.parse(safeStorage.decryptString(fs.readFileSync(credFile)))
+      if (creds) startBackgroundNativeSession(creds)
+      return creds
+    } catch {
+      startBackgroundNativeSession()
+      return null
+    }
+  })
+  ipcMain.handle('native-connect', async (_e, opts = {}) => {
+    const conn = await startBackgroundNativeSession(opts)
+    if (!conn) return { ok: false }
+    return { ok: true, realm: conn.realm, sessionId: conn.sessionId, account: conn.account }
+  })
+  ipcMain.handle('native-status', async () => {
+    const conn = await startBackgroundNativeSession()
+    return conn ? { connected: conn.isAlive(), realm: conn.realm, sessionId: conn.sessionId, account: conn.account } : { connected: false }
   })
   ipcMain.handle('take-link', () => { const l = pendingLink; pendingLink = undefined; return l })
+  startBackgroundNativeSession()
   createWindow()
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

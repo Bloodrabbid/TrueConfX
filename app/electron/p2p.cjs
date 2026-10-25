@@ -3,6 +3,7 @@
 // перед рукопожатием обе стороны шлют 20 байт «TC_FILETRANSFER_____». Описание — tccap/TC_FILETRANSFER.md.
 const net = require('node:net')
 const crypto = require('node:crypto')
+const vs = require('./vssession.cjs')
 
 const MAGIC = Buffer.from('TC_FILETRANSFER_____')
 // Прайм у TrueConf свой, не из спецификации BitTorrent (взят из бинарника нативного клиента, 768 бит, генератор 2).
@@ -135,14 +136,20 @@ async function handshake(w, infoHash) {
 const BLOCK = 16384
 const dbg = (...a) => process.env.P2P_DEBUG && console.log('[p2p]', ...a)
 
-async function download(host, hexHash, { port = 4307, timeout = 15000, maxSize = 512 * 1048576, onProgress } = {}) {
+function makePeerId() {
+  return `-LT1270-${crypto.randomBytes(6).toString('hex')}`
+}
+
+async function download(host, hexHash, { port = 4307, timeout = 15000, maxSize = 512 * 1048576, onProgress, peerId } = {}) {
   const infoHash = Buffer.from(hexHash, 'hex')
   const sock = await connect(host, port, timeout)
   const w = new Wire(sock)
   const guard = setTimeout(() => sock.destroy(new Error('Таймаут передачи')), 120000)
   try {
     await handshake(w, infoHash)
-    const myId = Buffer.concat([Buffer.from('-LT1270-'), crypto.randomBytes(12)])
+    const myId = peerId
+      ? (Buffer.isBuffer(peerId) ? peerId : Buffer.from(String(peerId), 'latin1'))
+      : Buffer.from(makePeerId(), 'latin1')
     const reserved = Buffer.alloc(8); reserved[5] |= 0x10
     w.write(Buffer.concat([Buffer.from([19]), Buffer.from('BitTorrent protocol'), reserved, infoHash, myId]))
     dbg('mse done')
@@ -216,11 +223,31 @@ async function download(host, hexHash, { port = 4307, timeout = 15000, maxSize =
   }
 }
 
-// Пиры из трекера (сжатый список по 6 байт). Трекер — тот же порт 4307 любого сервера TrueConf.
-async function peersFromTracker(host, hexHash, port = 4307) {
+// Пиры из трекера: сначала через нативный сервис TORRENT (TrackerAnnounce внутри VS-сессии :4307,
+// FUN_102c1ee70 / FUN_102c1ff60), при недоступности — резервный HTTP /announce.
+async function peersFromTracker(host, hexHash, { port = 4307, peerId, endpoints, nativeSession } = {}) {
+  const pid = peerId ? (Buffer.isBuffer(peerId) ? peerId.toString('latin1') : String(peerId)) : makePeerId()
+  try {
+    const conn = nativeSession || await vs.ensureNativeSession({ host, port })
+    if (conn && typeof conn.trackerAnnounce === 'function') {
+      const resp = await conn.trackerAnnounce({
+        infoHash: hexHash,
+        peerId: pid,
+        endpoints,
+        event: 1,
+        tracker: host
+      })
+      if (resp?.allPeers?.length) {
+        dbg('native TrackerAnnounce peers:', resp.allPeers)
+        return resp.allPeers
+      }
+    }
+  } catch (e) {
+    dbg('native TrackerAnnounce error:', e.message)
+  }
   try {
     const ih = [...Buffer.from(hexHash, 'hex')].map(b => '%' + b.toString(16).padStart(2, '0')).join('')
-    const r = await fetch(`http://${host}:${port}/announce?info_hash=${ih}&peer_id=-LT1270-${crypto.randomBytes(6).toString('hex')}&port=44307&uploaded=0&downloaded=0&left=1&compact=1&event=started`, { signal: AbortSignal.timeout(5000) })
+    const r = await fetch(`http://${host}:${port}/announce?info_hash=${ih}&peer_id=${encodeURIComponent(pid)}&port=44307&uploaded=0&downloaded=0&left=1&compact=1&event=started`, { signal: AbortSignal.timeout(5000) })
     const [d] = bdecode(Buffer.from(await r.arrayBuffer()))
     const raw = d.peers
     const out = []
@@ -235,9 +262,11 @@ async function peersFromTracker(host, hexHash, port = 4307) {
 }
 
 // Качаем у первого, кто отдаст: сначала серверы (свой и отправителя), потом пиры из трекера.
-async function fetchFile(hosts, hexHash, onProgress) {
-  const unique = [...new Set(hosts.filter(Boolean))]
-  const peers = (await Promise.all(unique.map(h => peersFromTracker(h, hexHash)))).flat()
+// Важно: один и тот же 20-байтовый peerId передаётся и в TrackerAnnounce, и в BitTorrent handshake.
+async function fetchFile(hosts, hexHash, onProgress, opts = {}) {
+  const unique = [...new Set((hosts || []).filter(Boolean))]
+  const peerId = opts.peerId || makePeerId()
+  const peers = (await Promise.all(unique.map(h => peersFromTracker(h, hexHash, { peerId, endpoints: opts.endpoints, nativeSession: opts.nativeSession })))).flat()
   // Дедуп по host:port: трекер часто отдаёт один и тот же недостижимый origin-пир
   // десятки раз, и без дедупа он забивает все слоты Promise.any.
   const seen = new Set()
@@ -245,10 +274,10 @@ async function fetchFile(hosts, hexHash, onProgress) {
     .filter(t => { const k = `${t.host}:${t.port}`; return seen.has(k) ? false : (seen.add(k), true) })
   dbg('targets', targets.map(t => `${t.host}:${t.port}`).join(' '))
   try {
-    return await Promise.any(targets.map(t => download(t.host, hexHash, { port: t.port, timeout: 4000, onProgress })))
+    return await Promise.any(targets.map(t => download(t.host, hexHash, { port: t.port, timeout: 4000, onProgress, peerId })))
   } catch (e) {
     throw new Error(e.errors?.[0]?.message ?? 'Файл никто не раздаёт')
   }
 }
 
-module.exports = { download, fetchFile }
+module.exports = { download, peersFromTracker, fetchFile, makePeerId }

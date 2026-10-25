@@ -16,4 +16,7 @@ contextBridge.exposeInMainWorld('native', {
   onDeepLink: cb => listen('deep-link', cb),
   onPickScreen: cb => listen('pick-screen', cb),
   pickScreen: id => ipcRenderer.send('screen-picked', id),
+  nativeConnect: opts => ipcRenderer.invoke('native-connect', opts),
+  nativeStatus: () => ipcRenderer.invoke('native-status'),
+  onNativeEvent: cb => listen('native-event', cb),
 })
