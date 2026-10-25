@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { MessageSquare, Users, Video, Settings as Gear, LogOut, Moon, Sun } from 'lucide-react'
+import { MessageSquare, Users, Video, Settings as Gear, LogOut, Moon, Sun, Download } from 'lucide-react'
 import { useStore, type Tab } from './store'
+import type { UpdateState } from './native'
 import { Login } from './ui/Login'
 import { ChatList, ChatView } from './ui/Chats'
 import { Contacts } from './ui/Contacts'
@@ -34,7 +35,12 @@ const NAV: [Tab, typeof MessageSquare, string][] = [['chats', MessageSquare, 'Ч
 
 export default function App() {
   const { account, tab, set, theme, logout, unread, conference, toast, offline } = useStore()
+  const [upd, setUpd] = useState<UpdateState | null>(null)
   useEffect(() => { document.documentElement.dataset.theme = theme }, [theme])
+  useEffect(() => {
+    window.native?.getUpdateState?.().then(setUpd)
+    return window.native?.onUpdateState?.(setUpd)
+  }, [])
 
   // Горячие клавиши звонка, как в Zoom/Meet.
   useEffect(() => {
@@ -50,11 +56,24 @@ export default function App() {
 
   if (!account) return <><div className="drag" /><Login />{toast && <div className="toast">{toast}</div>}</>
   const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0)
+  const hasUpdate = upd && (upd.state === 'available' || upd.state === 'downloading' || upd.state === 'installing')
 
   return (
     <div className={`shell ${window.native?.platform === 'darwin' ? 'mac' : ''}`}>
       <div className="drag" />
       {offline && <div className="offline-bar">Нет связи с сервером — переподключаюсь…</div>}
+      {!offline && hasUpdate && (
+        <div className="update-bar">
+          {upd.state === 'available' && (
+            <>
+              <span>Доступна версия {upd.version}</span>
+              <button onClick={() => window.native?.installUpdate?.()}>Обновить</button>
+            </>
+          )}
+          {upd.state === 'downloading' && <span>Загрузка обновления {upd.version}: {upd.percent}%…</span>}
+          {upd.state === 'installing' && <span>Установка v{upd.version} и перезапуск…</span>}
+        </div>
+      )}
       <nav className="rail">
         <Avatar name={account.displayName || account.trueconfId} id={account.trueconfId} size={36} presence="online" />
         {NAV.map(([key, Icon, label]) => (
@@ -65,6 +84,16 @@ export default function App() {
           </button>
         ))}
         <div className="grow" />
+        {hasUpdate && (
+          <button
+            className="rail-btn"
+            title={upd.state === 'available' ? `Обновить до v${upd.version}` : `Обновление v${upd.version} (${upd.percent}%)`}
+            onClick={() => window.native?.installUpdate?.()}
+          >
+            <Download size={19} />
+            <span className="update-dot" />
+          </button>
+        )}
         <button className="rail-btn" title="Тема" onClick={() => set({ theme: theme === 'dark' ? 'light' : 'dark' })}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button>
         <button className="rail-btn" title="Выйти" onClick={logout}><LogOut size={19} /></button>
       </nav>

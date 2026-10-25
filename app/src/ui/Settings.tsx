@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore, type NotifyLevel } from '../store'
+import type { UpdateState } from '../native'
 
 export function Settings() {
   const { devices, set, account, server, client, conference, logout, notifyPrefs, setNotifyPrefs } = useStore()
   const [list, setList] = useState<MediaDeviceInfo[]>([])
   const [level, setLevel] = useState(0)
   const [status, setStatus] = useState('')
+  const [upd, setUpd] = useState<UpdateState | null>(null)
   const raf = useRef(0)
+
+  useEffect(() => {
+    window.native?.getUpdateState?.().then(setUpd)
+    return window.native?.onUpdateState?.(setUpd)
+  }, [])
 
   useEffect(() => {
     let stream: MediaStream | undefined
@@ -74,6 +81,35 @@ export function Settings() {
         {sel('audiooutput', 'audioOut', 'Динамики')}
         {sel('videoinput', 'videoIn', 'Камера')}
       </div>
+      {upd && (
+        <div className="card">
+          <h3>Обновления</h3>
+          <div className="server-row">
+            <span className="muted small">
+              Версия <b>{upd.currentVersion}</b>
+              {upd.state === 'up-to-date' && ' · установлена последняя версия'}
+              {upd.state === 'checking' && ' · проверка обновлений…'}
+              {upd.state === 'available' && ` · доступна версия ${upd.version}`}
+              {upd.state === 'downloading' && ` · загрузка ${upd.version} (${upd.percent}%)…`}
+              {upd.state === 'installing' && ` · установка ${upd.version} и перезапуск…`}
+              {upd.state === 'error' && ` · ${upd.error}`}
+            </span>
+            {upd.state === 'available' ? (
+              <button className="primary small" onClick={() => window.native?.installUpdate?.()}>
+                Обновить до {upd.version}
+              </button>
+            ) : (
+              <button
+                className="ghost small-btn"
+                disabled={upd.state === 'checking' || upd.state === 'downloading' || upd.state === 'installing'}
+                onClick={() => window.native?.checkUpdate?.()}
+              >
+                Проверить обновления
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -19,4 +19,8 @@ contextBridge.exposeInMainWorld('native', {
   nativeConnect: opts => ipcRenderer.invoke('native-connect', opts),
   nativeStatus: () => ipcRenderer.invoke('native-status'),
   onNativeEvent: cb => listen('native-event', cb),
+  getUpdateState: () => ipcRenderer.invoke('update-get'),
+  checkUpdate: () => ipcRenderer.invoke('update-check'),
+  installUpdate: () => ipcRenderer.invoke('update-install'),
+  onUpdateState: cb => listen('update-state', cb),
 })

@@ -2,8 +2,10 @@
 const { app, BrowserWindow, session, desktopCapturer, shell, Notification, ipcMain, safeStorage, nativeImage } = require('electron')
 const fs = require('fs')
 const path = require('path')
+const { spawn } = require('child_process')
 const p2p = require('./p2p.cjs')
 const vs = require('./vssession.cjs')
+const { createUpdater } = require('./updater.cjs')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
 // Отладка через Chrome DevTools Protocol: TCX_DEBUG=9229 npx electron .
@@ -178,6 +180,32 @@ app.whenReady().then(() => {
     const conn = await startBackgroundNativeSession()
     return conn ? { connected: conn.isAlive(), realm: conn.realm, sessionId: conn.sessionId, account: conn.account } : { connected: false }
   })
+
+  // Автообновление из релизов GitHub (работает без сертификата Apple Developer ID).
+  const updater = createUpdater({
+    currentVersion: app.getVersion(),
+    onStateChange: st => win?.webContents.send('update-state', st),
+    relaunchAndExit: (targetPath, opts = {}) => {
+      if (opts.showOnly && targetPath) {
+        shell.showItemInFolder(targetPath)
+        return
+      }
+      if (process.platform === 'darwin' && targetPath) {
+        spawn('/usr/bin/open', ['-n', '-a', targetPath], { detached: true, stdio: 'ignore' }).unref()
+        app.exit(0)
+        return
+      }
+      if (targetPath) app.relaunch({ execPath: targetPath })
+      else app.relaunch()
+      app.exit(0)
+    }
+  })
+  ipcMain.handle('update-get', () => updater.getState())
+  ipcMain.handle('update-check', () => updater.check())
+  ipcMain.handle('update-install', () => updater.install())
+  setTimeout(() => updater.check(), 4000)
+  setInterval(() => updater.check(), 30 * 60_000)
+
   ipcMain.handle('take-link', () => { const l = pendingLink; pendingLink = undefined; return l })
   startBackgroundNativeSession()
   createWindow()

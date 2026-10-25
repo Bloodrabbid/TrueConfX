@@ -376,6 +376,10 @@ button.ghost.tiny { padding: 3px; }
 .read-mark { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--muted); cursor: default; }
 .read-mark.read { color: var(--accent); }
 .offline-bar { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 50; background: var(--warn); color: #1b1b1f; font-size: 12px; padding: 4px 14px; border-radius: 0 0 8px 8px; }
+.update-bar { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 50; background: var(--accent); color: #fff; font-size: 12px; padding: 4px 12px; border-radius: 0 0 8px 8px; display: inline-flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
+.update-bar button { background: rgba(255, 255, 255, .2); color: #fff; font-weight: 600; padding: 2px 8px; border-radius: 5px; }
+.update-bar button:hover { background: rgba(255, 255, 255, .32); }
+.update-dot { position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 
 /* Превью, пока оригинал у отправителя: размытая миниатюра с подписью поверх. */
 .att-image { position: relative; }
