@@ -102,6 +102,17 @@ function wire ({ fields, opts }) {
   assert.strictEqual(ice[0].username, 'u')
 }
 
+// 4ж) Настоящий формат SetTurnConfiguration (журнал оф. клиента): IceConfiguration, логин TURN в поле login.
+{
+  const ice = vc.parseIceConfiguration({ Method: 'SetTurnConfiguration', TurnUsageMode: 1, IceConfiguration: JSON.stringify([
+    { host: 'stun.trueconf.ru', port: 3478, protocol: 'stun', transports: ['udp'], roles: ['nativeclient'] },
+    { host: 'turn.trueconf.ru', port: 3478, protocol: 'turn', transports: ['udp'], roles: ['nativeclient'], login: 'L', password: 'P' }]) })
+  assert.strictEqual(ice.length, 2)
+  assert.strictEqual(ice[1].urls, 'turn:turn.trueconf.ru:3478')
+  assert.strictEqual(ice[1].username, 'L', 'логин TURN из поля login')
+  assert.strictEqual(ice[1].credential, 'P')
+}
+
 // 5) Hangup: Conference, Name, HangupFlags
 {
   const g = wire(vc.hangup({ conference: 'c', me: 'kirill@tc.t2.ru' }))

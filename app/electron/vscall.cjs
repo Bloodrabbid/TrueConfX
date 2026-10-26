@@ -243,7 +243,8 @@ function parseIceConfiguration (setPropsData) {
     const scheme = (s.protocol || 'stun').toLowerCase()
     const url = `${scheme}:${s.host}:${s.port}`
     const o = { urls: url }
-    if (s.username) o.username = s.username
+    // У TrueConf логин TURN лежит в поле login (журнал оф. клиента, PRTCL SetTurnConfiguration).
+    if (s.username || s.login) o.username = s.username || s.login
     if (s.credential || s.password) o.credential = s.credential || s.password
     return o
   })

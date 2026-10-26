@@ -152,6 +152,23 @@ function parseFixedPartMessage (buf) {
   }
 }
 
+// Кадр, который не разобрался: что о нём известно (без содержимого тела) — для журнала.
+function describeUnparsed (buf) {
+  const info = { _unparsed: true, len: buf.length, b0: buf[0] }
+  try {
+    const headerLen = buf.readUInt16LE(2); info.hdrLen = headerLen
+    info.payloadLen = (buf[5] | (buf[6] << 8) | (buf[7] << 16)) + 1
+    const strs = []; let off = 0x10
+    for (let i = 0; i < 9 && off < headerLen && off < buf.length; i++) { const n = buf[off]; strs.push(buf.slice(off + 1, off + 1 + n).toString('latin1')); off += n + 2 }
+    info.hdrStrings = strs
+    const payload = buf.slice(headerLen, headerLen + info.payloadLen)
+    let fields = null; try { fields = vv.deserialize(payload) } catch (e) { info.err = String(e.message) }
+    info.deserialized = !!fields
+    if (fields) info.names = fields.map(f => f.name + ':' + f.type)
+  } catch (e) { info.err = String(e.message) }
+  return { unparsed: true, service: '?', from: '', to: '', data: info }
+}
+
 class VSSession {
   // keyTx = key1 (клиент→сервер), keyRx = key2 (сервер→клиент).
   constructor (keyTx, keyRx) {
@@ -190,6 +207,7 @@ class VSSession {
       const plain = this.dec.decrypt(frameCipher)
       const msg = parseFixedPartMessage(plain)
       if (msg) messages.push(msg)
+      else messages.push(describeUnparsed(plain)) // раньше молча выбрасывали — так терялся SetTurnConfiguration?
     }
     return messages
   }
@@ -680,6 +698,7 @@ function connectAndLogin (opts = {}) {
         } else {
           const msgs = session.pushCiphertext(chunk)
           for (const m of msgs) {
+            if (m.unparsed) { for (const fn of listeners) { try { fn(m) } catch {} } continue }
             if (m.service === 'NET_CONFIG' && m.data.Method === 'SetProps') {
               if (m.data.authentication_method !== undefined) {
                 serverAuthMethod = String(m.data.authentication_method)
