@@ -121,7 +121,9 @@ function ringing ({ conference, me, caller } = {}) {
 
 // Принять звонок. Разбор FUN_1002bec60: Conference и Name берутся из сохранённого Invite,
 // т.е. Name = экземпляр ЗВОНЯЩЕГО; UserName = наш логин; AppId — только если есть.
-function accept ({ conference, caller, myName, me, appId, directConnect = 1, clientCaps = clientCapsFields(), symKey } = {}) {
+// DirectConnect = FUN_10034e8a0(): 0, если у клиента нет слушателя прямых TCP-входящих (у нас его нет).
+// Раньше слали 1 — звонящий ждал прямого подключения к нам и висел на «ожидании подключения».
+function accept ({ conference, caller, myName, me, appId, directConnect = 0, clientCaps = clientCapsFields(), symKey } = {}) {
   const e = [
     ['Conference', conference],
     ['Name', caller || myName],

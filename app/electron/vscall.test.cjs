@@ -72,6 +72,7 @@ function wire ({ fields, opts }) {
   assert.strictEqual(g.data.Name, 'peer@tc3.t2.ru/c6', 'Name = звонящий')
   assert.strictEqual(g.data.UserName, 'me@tc.t2.ru/36', 'UserName = мы')
   assert.ok(!('AppId' in g.data), 'AppId не шлём, если его нет')
+  assert.strictEqual(g.data.DirectConnect, 0, 'DirectConnect=0: слушателя прямых входящих нет (FUN_10034e8a0)')
 }
 
 // 4г) Accept несёт ClientCaps: контейнер разворачивается в поля живого Invite 8.5.5.
