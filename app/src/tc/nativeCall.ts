@@ -6,8 +6,9 @@
 // поэтому отдельный путь. Конференции остаются на web-пути.
 //
 // LIVE-PENDING (помечено, уточняется одним тестовым звонком с хуком, см. SPEC-native-calls.md):
-//   - кто первым шлёт offer (здесь: инициатор после Accept) и Type 0=offer/1=answer;
-//   - поля to/id у SendWebrtcMsg (здесь: to=instance пира, id=conference) — проверить.
+//   - кто первым шлёт offer (здесь: инициатор после Accept) и Type 0=offer/1=answer.
+// ПОДТВЕРЖДЕНО живым кадром 26.10.2026: в SendWebrtcMsg id = экземпляр ОТПРАВИТЕЛЯ,
+// to конверта = экземпляр получателя. Экземпляр пира узнаём из id его входящих сообщений.
 import type { NativeCallEvent, NativeCallKind } from '../native.d'
 
 export type NativeCallState = 'idle' | 'calling' | 'ringing' | 'incoming' | 'connecting' | 'live' | 'ended'
@@ -27,6 +28,8 @@ export class NativeCall {
   state: NativeCallState = 'idle'
   conference = ''
   peer = ''
+  // Полный экземпляр пира (user@srv/inst) — из поля id его SDP/ICE; до этого шлём на callId.
+  private peerInstance = ''
   private pc?: RTCPeerConnection
   private local?: MediaStream
   private ice: RTCIceServer[] = []
@@ -94,8 +97,12 @@ export class NativeCall {
 
   dispose() { this.offItems.forEach(f => f()); this.offItems = []; this.cleanup('dispose') }
 
+  // Адресация SendWebrtcMsg: id — свой экземпляр, to — экземпляр пира.
+  private route() { return { id: this.self.instance, to: this.peerInstance || this.peer } }
+
   // --- приём сигналинга ---
   private async onSignal(ev: NativeCallEvent) {
+    if ((ev.kind === 'sdp' || ev.kind === 'candidate') && ev.id) this.peerInstance = ev.id
     switch (ev.kind) {
       case 'created':
         if (this.initiator) {
@@ -140,7 +147,7 @@ export class NativeCall {
       this.send('candidate', {
         candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid ?? '0',
         mLineIndex: e.candidate.sdpMLineIndex ?? 0,
-        conference: this.conference, id: this.conference, to: this.peer // LIVE-PENDING: to/id
+        conference: this.conference, ...this.route()
       })
     }
     pc.onconnectionstatechange = () => {
@@ -157,7 +164,7 @@ export class NativeCall {
     this.offerSent = true
     const offer = await this.pc.createOffer()
     await this.pc.setLocalDescription(offer)
-    await this.send('sdp', { sdp: offer.sdp, type: 0 /* WEBRTC_OFFER, LIVE-PENDING */, conference: this.conference, id: this.conference, to: this.peer })
+    await this.send('sdp', { sdp: offer.sdp, type: 0 /* WEBRTC_OFFER, LIVE-PENDING */, conference: this.conference, ...this.route() })
   }
 
   private async onRemoteSdp(ev: Extract<NativeCallEvent, { kind: 'sdp' }>) {
@@ -167,7 +174,7 @@ export class NativeCall {
     if (ev.sdpType === 'offer') {
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
-      await this.send('sdp', { sdp: answer.sdp, type: 1 /* WEBRTC_ANSWER */, conference: this.conference, id: this.conference, to: this.peer })
+      await this.send('sdp', { sdp: answer.sdp, type: 1 /* WEBRTC_ANSWER */, conference: this.conference, ...this.route() })
     }
   }
 
@@ -179,7 +186,7 @@ export class NativeCall {
   private cleanup(reason: string) {
     this.pc?.close(); this.pc = undefined
     this.local?.getTracks().forEach(t => t.stop()); this.local = undefined
-    this.offerSent = false; this.pendingRemote = []
+    this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''
     if (this.state !== 'ended') this.setState('ended', reason)
   }
 }

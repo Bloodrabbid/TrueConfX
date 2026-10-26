@@ -13,8 +13,13 @@
 // LIVE-PENDING (помечено KNOWN?/нужен один тестовый звонок с хуком encrypt/decrypt):
 //   - P2P_CONF_TYPE / SUBTYPE / SCOPE / MAXPARTS в CreateConference;
 //   - содержимое ClientCaps (контейнер FUN_1002b9dc0);
-//   - кто первым шлёт offer и точное соответствие Type 0=offer / 1=answer;
-//   - смысл полей to/id в SendWebrtcMsg (вероятно instance пира login/cid).
+//   - кто первым шлёт offer и точное соответствие Type 0=offer / 1=answer.
+//
+// ПОДТВЕРЖДЕНО живым захватом 26.10.2026 (входящий ICE-кандидат от пира, cap/call_p2p_cap.txt):
+//   SendWebrtcMsg на CLIENT, поля по порядку: SdpParam, SdpMidParam, MLineIndexParam u32,
+//   Type u32 (2 = кандидат), Conference ("<hex>@<сервер звонящего>#vcs"), id, ClientRtcVersion u32 = 3,
+//   RtcVersion u32 = 4. id = полный экземпляр ОТПРАВИТЕЛЯ (user@srv/inst), to конверта = экземпляр
+//   получателя. Поэтому шлём id = свой экземпляр, to = экземпляр пира (узнаём из его входящего id).
 // Эти значения тут — именованные константы, их правим после живого захвата, код не трогаем.
 
 const { appMessage, fieldsToObject } = require('./vssession.cjs')
@@ -26,6 +31,10 @@ const SRV_CLIENT = 'CLIENT'
 const WEBRTC_OFFER = 0 // KNOWN? 0/1 — SDP; какой из них offer, уточнить живым звонком
 const WEBRTC_ANSWER = 1
 const WEBRTC_CANDIDATE = 2
+
+// Версии WebRTC-сигналинга — значения из живого кадра пира (26.10.2026).
+const CLIENT_RTC_VERSION = 3
+const RTC_VERSION = 4
 
 // KNOWN? значения для P2P-конференции (CreateConference). Пока нейтральные; правим по захвату.
 const P2P = { type: 0, subType: 0, scope: 0, maxParts: 2, duration: 0 }
@@ -107,20 +116,21 @@ function hangup ({ conference, me, result, hangupFlags = 0 } = {}) {
   return { fields: appMessage('Hangup', e), opts: { service: SRV_CONF, to: conference } }
 }
 
-// SDP offer/answer. type — WEBRTC_OFFER|WEBRTC_ANSWER. to — instance пира.
-function webrtcSdp ({ sdp, type, conference, id, to, clientRtcVersion = 2 } = {}) {
+// SDP offer/answer. type — WEBRTC_OFFER|WEBRTC_ANSWER. id — свой экземпляр, to — экземпляр пира.
+function webrtcSdp ({ sdp, type, conference, id, to, clientRtcVersion = CLIENT_RTC_VERSION, rtcVersion = RTC_VERSION } = {}) {
   const e = [
     ['SdpParam', sdp],
     ['Type', u32(type)],
     ['Conference', conference],
     ['id', id],
-    ['ClientRtcVersion', u32(clientRtcVersion)]
+    ['ClientRtcVersion', u32(clientRtcVersion)],
+    ['RtcVersion', u32(rtcVersion)]
   ]
   return { fields: appMessage('SendWebrtcMsg', e), opts: { service: SRV_CLIENT, to } }
 }
 
 // ICE-кандидат.
-function webrtcCandidate ({ candidate, sdpMid, mLineIndex, conference, id, to, clientRtcVersion = 2 } = {}) {
+function webrtcCandidate ({ candidate, sdpMid, mLineIndex, conference, id, to, clientRtcVersion = CLIENT_RTC_VERSION, rtcVersion = RTC_VERSION } = {}) {
   const e = [
     ['SdpParam', candidate],
     ['SdpMidParam', sdpMid],
@@ -128,7 +138,8 @@ function webrtcCandidate ({ candidate, sdpMid, mLineIndex, conference, id, to, c
     ['Type', u32(WEBRTC_CANDIDATE)],
     ['Conference', conference],
     ['id', id],
-    ['ClientRtcVersion', u32(clientRtcVersion)]
+    ['ClientRtcVersion', u32(clientRtcVersion)],
+    ['RtcVersion', u32(rtcVersion)]
   ]
   return { fields: appMessage('SendWebrtcMsg', e), opts: { service: SRV_CLIENT, to } }
 }
@@ -204,7 +215,7 @@ function num (v) {
 }
 
 module.exports = {
-  SRV_CONF, SRV_CLIENT, WEBRTC_OFFER, WEBRTC_ANSWER, WEBRTC_CANDIDATE, P2P,
+  SRV_CONF, SRV_CLIENT, WEBRTC_OFFER, WEBRTC_ANSWER, WEBRTC_CANDIDATE, CLIENT_RTC_VERSION, RTC_VERSION, P2P,
   createConference, invite, ringing, accept, reject, hangup,
   webrtcSdp, webrtcCandidate, build,
   parseIncoming, parseIceConfiguration,

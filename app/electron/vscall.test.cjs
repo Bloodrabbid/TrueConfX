@@ -36,7 +36,7 @@ function wire ({ fields, opts }) {
   assert.ok(!g2.fields.some(x => x.name === 'AudioOnly'), 'без audioOnly флага нет')
 }
 
-// 3) SDP offer: сервис CLIENT, Type=0, ClientRtcVersion=2, to = instance пира
+// 3) SDP offer: сервис CLIENT, Type=0, версии из живого кадра, to = instance пира
 {
   const g = wire(vc.webrtcSdp({ sdp: 'v=0...', type: vc.WEBRTC_OFFER, conference: 'c', id: 'callid1', to: 'bob@tc.t2.ru/ab12' }))
   assert.strictEqual(g.service, 'CLIENT', 'SDP на сервис CLIENT')
@@ -44,7 +44,8 @@ function wire ({ fields, opts }) {
   assert.strictEqual(g.data.Method, 'SendWebrtcMsg')
   assert.strictEqual(g.data.SdpParam, 'v=0...')
   assert.strictEqual(g.data.Type, 0, 'offer Type=0')
-  assert.strictEqual(g.data.ClientRtcVersion, 2, 'ClientRtcVersion=2')
+  assert.strictEqual(g.data.ClientRtcVersion, 3, 'ClientRtcVersion=3 (живой кадр)')
+  assert.strictEqual(g.data.RtcVersion, 4, 'RtcVersion=4 (живой кадр)')
 }
 
 // 4) ICE-кандидат: Type=2 + SdpMid + MLineIndex
@@ -53,6 +54,16 @@ function wire ({ fields, opts }) {
   assert.strictEqual(g.data.Type, 2, 'кандидат Type=2')
   assert.strictEqual(g.data.SdpMidParam, '0')
   assert.strictEqual(g.data.MLineIndexParam, 0)
+}
+
+// 4б) Кандидат — ровно порядок полей живого кадра пира (cap/call_p2p_cap.txt, 26.10.2026).
+{
+  const g = wire(vc.webrtcCandidate({ candidate: 'candidate:1 1 udp', sdpMid: '0', mLineIndex: 0, conference: 'f@tc3.t2.ru#vcs', id: 'me@tc.t2.ru/1', to: 'peer@tc3.t2.ru/2' }))
+  assert.deepStrictEqual(g.fields.map(f => f.name),
+    ['Method', 'SdpParam', 'SdpMidParam', 'MLineIndexParam', 'Type', 'Conference', 'id', 'ClientRtcVersion', 'RtcVersion'],
+    'порядок полей = живой кадр')
+  assert.strictEqual(g.to, 'peer@tc3.t2.ru/2', 'to = экземпляр пира')
+  assert.strictEqual(g.data.id, 'me@tc.t2.ru/1', 'id = свой экземпляр')
 }
 
 // 5) Hangup: Conference, Name, HangupFlags

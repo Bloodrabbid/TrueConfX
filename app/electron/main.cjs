@@ -206,6 +206,10 @@ app.whenReady().then(() => {
     const conn = await startBackgroundNativeSession()
     if (!conn || !conn.isAlive()) return { ok: false, error: 'нет нативной сессии' }
     try {
+      // SendWebrtcMsg: id = экземпляр ОТПРАВИТЕЛЯ (живой кадр 26.10.2026). Это экземпляр
+      // нативной сессии (UserName из ответа LoginUser), а не веб-сессии renderer'а.
+      const native = conn.account && conn.account.UserName
+      if ((kind === 'sdp' || kind === 'candidate') && native) args = { ...args, id: String(native) }
       const { fields, opts } = vscall.build(kind, args)
       conn.sendApp(fields, opts)
       return { ok: true }
