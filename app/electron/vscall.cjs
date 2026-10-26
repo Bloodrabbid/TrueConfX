@@ -229,9 +229,12 @@ function parseIncoming (m) {
   return null
 }
 
-// IceConfiguration из SetTurnConfiguration → массив для RTCPeerConnection.iceServers.
+// Настройки TURN/STUN → массив для RTCPeerConnection.iceServers.
+// Разбор FUN_10031dfe0: метод SetTurnConfiguration (сервис NET_CONFIG, хеш 0x197af716 сверен),
+// строка лежит в поле TurnConfiguration. IceConfiguration — старое имя из моей спецификации, оставлено запасным.
 function parseIceConfiguration (setPropsData) {
-  const raw = str(setPropsData && (setPropsData.IceConfiguration || setPropsData.iceConfiguration))
+  const d = setPropsData || {}
+  const raw = str(d.TurnConfiguration || d.IceConfiguration || d.iceConfiguration)
   if (!raw) return []
   let list
   try { list = JSON.parse(raw) } catch { return [] }

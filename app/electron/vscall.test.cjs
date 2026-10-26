@@ -94,6 +94,14 @@ function wire ({ fields, opts }) {
   assert.strictEqual(ev.kind, 'sdp'); assert.strictEqual(ev.sdpType, 'offer'); assert.strictEqual(ev.id, 'peer/1')
 }
 
+// 4е) Настройки TURN берутся из поля TurnConfiguration (SetTurnConfiguration, FUN_10031dfe0).
+{
+  const ice = vc.parseIceConfiguration({ Method: 'SetTurnConfiguration', TurnConfiguration: JSON.stringify([{ host: 'turn.example', port: 3478, protocol: 'turn', username: 'u', credential: 'c' }]) })
+  assert.strictEqual(ice.length, 1, 'TurnConfiguration разобран')
+  assert.strictEqual(ice[0].urls, 'turn:turn.example:3478')
+  assert.strictEqual(ice[0].username, 'u')
+}
+
 // 5) Hangup: Conference, Name, HangupFlags
 {
   const g = wire(vc.hangup({ conference: 'c', me: 'kirill@tc.t2.ru' }))

@@ -204,13 +204,16 @@ app.whenReady().then(() => {
           try {
             const call = vscall.parseIncoming(m)
             if (call) win?.webContents.send('call-event', call)
-            if (m.data && (m.data.IceConfiguration || m.data.iceConfiguration)) {
+            if (m.data && (m.data.TurnConfiguration || m.data.IceConfiguration || m.data.iceConfiguration)) {
               const ice = vscall.parseIceConfiguration(m.data)
               if (ice.length) win?.webContents.send('call-ice-servers', ice)
             }
           } catch {}
         })
         try { conn.updateStatus(1) } catch {}
+        // Как оф. клиент после входа: запрос свойств у NET_CONFIG. Проверяем, пришлёт ли сервер
+        // за ним SetTurnConfiguration (без TURN медиа между домашней сетью и сетью t2 не сходится).
+        try { conn.getAppProps().catch(() => {}) } catch {}
       }
       return conn
     }).catch(() => null)
@@ -298,6 +301,7 @@ function wireLog (dir, msg) {
     const data = {}
     for (const [k, v] of Object.entries(msg.data || {})) {
       if (WIRE_SECRET.test(k)) data[k] = '<скрыто>'
+      else if (/^(TurnConfiguration|IceConfiguration)$/.test(k)) data[k] = String(Buffer.isBuffer(v) ? v.toString('utf8') : v).replace(/("(?:password|credential|username|user|login|pass)"\s*:\s*)"[^"]*"/gi, '$1"<скрыто>"')
       else if (Buffer.isBuffer(v)) data[k] = { bytes: v.length, hex: v.slice(0, 4096).toString('hex') }
       else data[k] = v
     }
