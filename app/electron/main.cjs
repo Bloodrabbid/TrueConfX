@@ -260,6 +260,8 @@ app.whenReady().then(() => {
       if ((kind === 'sdp' || kind === 'candidate') && native) args = { ...args, id: String(native) }
       // Наш адрес в сигналинге конференции — тоже экземпляр нативной сессии (как UserName у оф. клиента).
       if (['ringing', 'accept', 'reject', 'hangup'].includes(kind) && native) args = { ...args, me: String(native) }
+      // Разведка плана А: TCX_NATIVE_MEDIA=1 — Accept всегда с 0, чтобы звонящий пошёл нативными потоками.
+      if (kind === 'accept' && process.env.TCX_NATIVE_MEDIA === '1') args = { ...args, directConnect: 0 }
       const { fields, opts } = vscall.build(kind, args)
       conn.sendApp(fields, opts)
       // План А, разведка: после Accept без WebRTC звонящий ждёт нативные потоки. Пробуем открыть их
