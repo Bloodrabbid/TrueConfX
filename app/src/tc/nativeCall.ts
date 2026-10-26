@@ -26,7 +26,7 @@ type Events = {
 const NO_DIRECT_CONNECT = 0
 const DIRECT_RTC = 7
 // Сколько ждать WebRTC до Accept. Звонящий в это время видит «звонит».
-const RTC_WAIT_MS = 25000
+const RTC_WAIT_MS = 40000
 
 const STUN_FALLBACK: RTCIceServer[] = [{ urls: 'stun:stun.trueconf.ru:3478' }]
 
@@ -110,7 +110,7 @@ export class NativeCall {
         const pc = this.pc
         if (!pc || this.state === 'ended') return resolve(false)
         if (pc.connectionState === 'connected') return resolve(true)
-        if (pc.connectionState === 'failed' || Date.now() - t0 >= ms) return resolve(false)
+        if (Date.now() - t0 >= ms) return resolve(false)
         setTimeout(tick, 100)
       }
       tick()
@@ -228,11 +228,23 @@ export class NativeCall {
       log('conn')
       if (pc.connectionState === 'connected' && this.state !== 'connecting') this.setState('live')
       // disconnected — временное состояние WebRTC, из него соединение восстанавливается; закрываем только failed.
+      // До Accept (ждём WebRTC): не рвём звонок, а перезапускаем ICE — так делает и звонящий (tcrtc «Ice restart»).
+      else if (pc.connectionState === 'failed' && this.state === 'connecting' && !this.initiator && this.iceRestarts < 2) this.restartIce()
       else if (pc.connectionState === 'failed') this.cleanup('разрыв связи')
     }
     // отложенные remote-сообщения, пришедшие до создания pc
     const q = this.pendingRemote; this.pendingRemote = []
     q.forEach(ev => this.onSignal(ev))
+  }
+
+  private iceRestarts = 0
+  private async restartIce() {
+    if (!this.pc) return
+    this.iceRestarts++
+    window.native?.callLog?.({ ev: 'ice-restart', n: this.iceRestarts })
+    this.pc.restartIce()
+    this.offerSent = false
+    await this.makeOffer()
   }
 
   private async makeOffer() {
@@ -307,7 +319,7 @@ export class NativeCall {
     this.pc?.getSenders().forEach(s => s.track?.stop())
     this.pc?.close(); this.pc = undefined
     this.local?.getTracks().forEach(t => t.stop()); this.local = undefined
-    this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''; this.remoteSdpSeen = false; this.lateCandidates = []
+    this.offerSent = false; this.iceRestarts = 0; this.pendingRemote = []; this.peerInstance = ''; this.remoteSdpSeen = false; this.lateCandidates = []
     if (this.conference) this.endedConference = this.conference
     if (this.state !== 'ended') this.setState('ended', reason)
   }
