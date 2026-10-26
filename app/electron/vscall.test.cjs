@@ -66,6 +66,14 @@ function wire ({ fields, opts }) {
   assert.strictEqual(g.data.id, 'me@tc.t2.ru/1', 'id = свой экземпляр')
 }
 
+// 4в) Accept: Name = экземпляр звонящего из Invite (FUN_1002bec60), UserName = мы, без AppId.
+{
+  const g = wire(vc.accept({ conference: 'f@tc3.t2.ru#vcs', caller: 'peer@tc3.t2.ru/c6', me: 'me@tc.t2.ru/36' }))
+  assert.strictEqual(g.data.Name, 'peer@tc3.t2.ru/c6', 'Name = звонящий')
+  assert.strictEqual(g.data.UserName, 'me@tc.t2.ru/36', 'UserName = мы')
+  assert.ok(!('AppId' in g.data), 'AppId не шлём, если его нет')
+}
+
 // 5) Hangup: Conference, Name, HangupFlags
 {
   const g = wire(vc.hangup({ conference: 'c', me: 'kirill@tc.t2.ru' }))

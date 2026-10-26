@@ -365,6 +365,7 @@ export const useStore = create<State>((set, get) => ({
     if (!call) return
     set({ incomingCall: undefined })
     await call.answer({ audio: true, video: get().joinVideo, ...media })
+    if (call.mediaError) get().notify(`Нет доступа к камере и микрофону: ${call.mediaError}`)
   },
   rejectCall: () => { get().nativeCall?.reject(); set({ incomingCall: undefined }) },
   endCall: () => { get().nativeCall?.hangup() },

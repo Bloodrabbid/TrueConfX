@@ -214,6 +214,8 @@ app.whenReady().then(() => {
       // нативной сессии (UserName из ответа LoginUser), а не веб-сессии renderer'а.
       const native = conn.account && conn.account.UserName
       if ((kind === 'sdp' || kind === 'candidate') && native) args = { ...args, id: String(native) }
+      // Наш адрес в сигналинге конференции — тоже экземпляр нативной сессии (как UserName у оф. клиента).
+      if (['ringing', 'accept', 'reject', 'hangup'].includes(kind) && native) args = { ...args, me: String(native) }
       const { fields, opts } = vscall.build(kind, args)
       conn.sendApp(fields, opts)
       return { ok: true }
@@ -263,7 +265,7 @@ function wireLog (dir, msg) {
     const data = {}
     for (const [k, v] of Object.entries(msg.data || {})) {
       if (WIRE_SECRET.test(k)) data[k] = '<скрыто>'
-      else if (Buffer.isBuffer(v)) data[k] = { bytes: v.length, hex: v.slice(0, 64).toString('hex') }
+      else if (Buffer.isBuffer(v)) data[k] = { bytes: v.length, hex: v.slice(0, 4096).toString('hex') }
       else data[k] = v
     }
     fs.appendFileSync(path.join(dirPath, 'native-wire.jsonl'), JSON.stringify({ t: new Date().toISOString(), dir, ...msg, data }, (_k, v) => typeof v === 'bigint' ? String(v) : v) + '\n')

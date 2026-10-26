@@ -69,16 +69,20 @@ export class NativeCall {
   }
 
   // Принять входящий звонок (после события 'incoming').
+  // Accept уходит в любом случае: без камеры — только звук, без звука — без своего медиа.
+  // Name = экземпляр звонящего (из Invite), AppId не шлём — так делает оф. клиент (FUN_1002bec60).
   async answer(media: CallMedia) {
     this.initiator = false
-    await this.openMedia(media)
-    await this.send('ringing', { conference: this.conference, me: this.self.callId, caller: this.peer })
-    await this.send('accept', {
-      conference: this.conference, myName: this.self.displayName, me: this.self.callId, appId: this.self.appId
-    })
-    this.setupPc()
     this.setState('connecting')
+    const r = await this.send('accept', { conference: this.conference, caller: this.peer, me: this.self.callId })
+    if (!r?.ok) { this.cleanup(`Accept не ушёл: ${r?.error ?? 'нет ответа'}`); return }
+    try { await this.openMedia(media) } catch (e: any) {
+      try { await this.openMedia({ ...media, video: false }) } catch { this.mediaError = String(e?.message ?? e) }
+    }
+    this.setupPc()
   }
+
+  mediaError = ''
 
   async reject() {
     await this.send('reject', { conference: this.conference, caller: this.peer, me: this.self.callId, cause: 0 })
@@ -114,6 +118,8 @@ export class NativeCall {
         this.conference = ev.conference; this.peer = ev.caller
         this.setState('incoming')
         this.emit('incoming', { conference: ev.conference, caller: ev.caller, audioOnly: ev.audioOnly })
+        // Как оф. клиент: сразу сообщаем серверу «звонит» (CallId = мы, CallID2 = звонящий).
+        this.send('ringing', { conference: ev.conference, me: this.self.callId, caller: ev.caller })
         break
       case 'accept':
         // Пир принял — инициатор создаёт offer. LIVE-PENDING: подтвердить направление.

@@ -83,11 +83,12 @@ function ringing ({ conference, me, caller } = {}) {
   return { fields: appMessage('Ringing', e), opts: { service: SRV_CONF } }
 }
 
-// Принять звонок.
-function accept ({ conference, myName, me, appId, directConnect = 1, clientCaps, symKey } = {}) {
+// Принять звонок. Разбор FUN_1002bec60: Conference и Name берутся из сохранённого Invite,
+// т.е. Name = экземпляр ЗВОНЯЩЕГО; UserName = наш логин; AppId — только если есть.
+function accept ({ conference, caller, myName, me, appId, directConnect = 1, clientCaps, symKey } = {}) {
   const e = [
     ['Conference', conference],
-    ['Name', myName],
+    ['Name', caller || myName],
     ['UserName', me]
   ]
   if (appId) e.push(['AppId', appId])
