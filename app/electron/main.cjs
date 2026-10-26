@@ -6,6 +6,7 @@ const { spawn } = require('child_process')
 const p2p = require('./p2p.cjs')
 const vs = require('./vssession.cjs')
 const vscall = require('./vscall.cjs')
+const vsstream = require('./vsstream.cjs')
 const { createUpdater } = require('./updater.cjs')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
@@ -261,6 +262,9 @@ app.whenReady().then(() => {
       if (['ringing', 'accept', 'reject', 'hangup'].includes(kind) && native) args = { ...args, me: String(native) }
       const { fields, opts } = vscall.build(kind, args)
       conn.sendApp(fields, opts)
+      // План А, разведка: после Accept без WebRTC звонящий ждёт нативные потоки. Пробуем открыть их
+      // и снимаем ответ сервера и сырые байты в журнал (SPEC-native-media.md). Сами пока ничего не шлём.
+      if (kind === 'accept' && !args.directConnect && native) startStreamProbe(String(args.conference), String(native), String(args.caller))
       return { ok: true }
     } catch (err) {
       return { ok: false, error: String(err && err.message || err) }
@@ -301,6 +305,27 @@ app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWind
 
 // Пишет сообщение нативной сессии в JSONL; секреты маскирует, длинные буферы укорачивает.
 const WIRE_SECRET = /^(Key|Password|Hash|Cookie|Credentials|SecureKey|Token|AuthKey)$/i
+function startStreamProbe (conference, me, peer) {
+  const host = vsstream.confHost(conference)
+  if (!host || !peer) return
+  const dir = app.getPath('logs')
+  const log = data => wireLog('STREAM', { service: 'STREAM', data })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  // Тело запроса по разбору: conf, s=я, r=пир, ep=я — у обоих потоков (FUN_10015df00). Журнал оф. клиента
+  // пишет у получателя «s = пир r = я», поэтому при отказе получателю пробуем и такой порядок.
+  vsstream.probeStream({ host, conf: conference, s: me, r: peer, ep: me, type: vsstream.STREAM_SENDER, dumpPath: path.join(dir, `stream-send-${stamp}.bin`), log })
+  const recv = (s, r, tag) => vsstream.probeStream({
+    host, conf: conference, s, r, ep: me, type: vsstream.STREAM_RECEIVER, dumpPath: path.join(dir, `stream-recv${tag}-${stamp}.bin`),
+    log: d => {
+      log({ ...d, variant: tag })
+      const failed = (d.ev === 'stream-answer' && !d.ok) || (d.ev === 'stream-close' && !d.shaken)
+      if (tag === 'A' && failed && !triedB) { triedB = true; recv(peer, me, 'B') }
+    }
+  })
+  let triedB = false
+  recv(me, peer, 'A')
+}
+
 function wireLog (dir, msg) {
   try {
     const dirPath = path.join(app.getPath('logs'))
