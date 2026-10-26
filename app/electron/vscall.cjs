@@ -133,6 +133,18 @@ function webrtcCandidate ({ candidate, sdpMid, mLineIndex, conference, id, to, c
   return { fields: appMessage('SendWebrtcMsg', e), opts: { service: SRV_CLIENT, to } }
 }
 
+// Диспетчер: по виду действия вернуть { fields, opts } для session.sendApp.
+// Используется IPC-мостом main-процесса (renderer присылает { kind, args }).
+const BUILDERS = {
+  createConference, invite, ringing, accept, reject, hangup,
+  sdp: webrtcSdp, candidate: webrtcCandidate
+}
+function build (kind, args = {}) {
+  const fn = BUILDERS[kind]
+  if (!fn) throw new Error('неизвестное действие звонка: ' + kind)
+  return fn(args)
+}
+
 // --- Разбор входящих ---
 
 // Классифицировать входящее сообщение звонка. m — { service, from, data } (data = fieldsToObject).
@@ -194,7 +206,7 @@ function num (v) {
 module.exports = {
   SRV_CONF, SRV_CLIENT, WEBRTC_OFFER, WEBRTC_ANSWER, WEBRTC_CANDIDATE, P2P,
   createConference, invite, ringing, accept, reject, hangup,
-  webrtcSdp, webrtcCandidate,
+  webrtcSdp, webrtcCandidate, build,
   parseIncoming, parseIceConfiguration,
   fieldsToObject
 }

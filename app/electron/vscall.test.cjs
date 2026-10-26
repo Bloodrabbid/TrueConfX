@@ -95,4 +95,13 @@ function wire ({ fields, opts }) {
   assert.ok(caught, 'перестановка полей обязана валить сверку')
 }
 
-console.log('OK: сигналинг звонков — строители и разбор (CONFERENCE/CLIENT, SDP/ICE), формат на проводе сверен')
+// 9) Диспетчер build(kind,args) — тот же результат, что прямой строитель
+{
+  const direct = vc.invite({ conference: 'c', peer: 'b', myName: 'k' })
+  const viaBuild = vc.build('invite', { conference: 'c', peer: 'b', myName: 'k' })
+  assert.deepStrictEqual(viaBuild.opts, direct.opts)
+  assert.strictEqual(viaBuild.fields.length, direct.fields.length)
+  assert.throws(() => vc.build('ненет', {}), /неизвестное действие/, 'неизвестный kind → ошибка')
+}
+
+console.log('OK: сигналинг звонков — строители, диспетчер и разбор (CONFERENCE/CLIENT, SDP/ICE), формат на проводе сверен')

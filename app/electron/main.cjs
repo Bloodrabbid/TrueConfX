@@ -5,6 +5,7 @@ const path = require('path')
 const { spawn } = require('child_process')
 const p2p = require('./p2p.cjs')
 const vs = require('./vssession.cjs')
+const vscall = require('./vscall.cjs')
 const { createUpdater } = require('./updater.cjs')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
@@ -163,6 +164,15 @@ app.whenReady().then(() => {
             extra: m.extra,
             data: m.data
           })
+          // Сигналинг звонка — отдельным разобранным каналом для renderer.
+          try {
+            const call = vscall.parseIncoming(m)
+            if (call) win?.webContents.send('call-event', call)
+            if (m.data && (m.data.IceConfiguration || m.data.iceConfiguration)) {
+              const ice = vscall.parseIceConfiguration(m.data)
+              if (ice.length) win?.webContents.send('call-ice-servers', ice)
+            }
+          } catch {}
         })
         try { conn.updateStatus(1) } catch {}
       }
@@ -189,6 +199,19 @@ app.whenReady().then(() => {
   ipcMain.handle('native-status', async () => {
     const conn = await startBackgroundNativeSession()
     return conn ? { connected: conn.isAlive(), realm: conn.realm, sessionId: conn.sessionId, account: conn.account } : { connected: false }
+  })
+  // Исходящий сигналинг звонка: renderer присылает { kind, args }, main строит
+  // сообщение (vscall) и шлёт его по живой нативной сессии.
+  ipcMain.handle('native-call', async (_e, kind, args = {}) => {
+    const conn = await startBackgroundNativeSession()
+    if (!conn || !conn.isAlive()) return { ok: false, error: 'нет нативной сессии' }
+    try {
+      const { fields, opts } = vscall.build(kind, args)
+      conn.sendApp(fields, opts)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: String(err && err.message || err) }
+    }
   })
 
   // Автообновление из релизов GitHub (работает без сертификата Apple Developer ID).
