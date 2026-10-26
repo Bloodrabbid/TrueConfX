@@ -43,7 +43,7 @@ interface State {
   // Нативный P2P-звонок (:4307), отдельно от веб-конференций.
   nativeCall?: NativeCall
   callState: NativeCallState
-  incomingCall?: { conference: string; caller: string; audioOnly: boolean }
+  incomingCall?: { conference: string; caller: string; displayName?: string; audioOnly: boolean }
   ensureNativeCall: () => NativeCall | undefined
   startNativeCall: (peer: string, media?: Partial<CallMedia>) => Promise<void>
   answerCall: (media?: Partial<CallMedia>) => Promise<void>

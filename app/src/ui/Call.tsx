@@ -20,7 +20,7 @@ function IncomingCall() {
   const rejectCall = useStore(s => s.rejectCall)
   const nameOf = useStore(s => s.nameOf)
   if (!incomingCall) return null
-  const who = nameOf(incomingCall.caller) || incomingCall.caller
+  const who = incomingCall.displayName || nameOf(incomingCall.caller.split('/')[0]) || incomingCall.caller
   return (
     <div className="call-overlay incoming">
       <div className="call-card">

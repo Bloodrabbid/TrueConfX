@@ -829,9 +829,20 @@ function connectAndLogin (opts = {}) {
 let activeConnPromise = null
 let activeConnOpts = null
 
+// Меняют ли новые настройки то, с чем открыта сессия (сервер, логин, ключ, пароль).
+// undefined в новых настройках — «не трогать», а не «сбросить».
+const NATIVE_OPT_KEYS = ['host', 'port', 'login', 'cid', 'key', 'password', 'forcePassword']
+function nativeOptsChanged (prev = {}, next = {}) {
+  return NATIVE_OPT_KEYS.some(k => next[k] !== undefined && next[k] !== (prev || {})[k])
+}
+
+// Пересоздаём сессию ТОЛЬКО при смене настроек. Раньше закрывали всегда — и каждый
+// вызов по IPC (Ringing, Accept, статус) открывал новую сессию с новым экземпляром:
+// сервер слал Invite новому экземпляру, мы снова отвечали — петля (журнал 26.10.2026).
 function configureNativeSession (opts = {}) {
+  const changed = nativeOptsChanged(activeConnOpts, opts)
   activeConnOpts = { ...activeConnOpts, ...opts }
-  if (activeConnPromise) {
+  if (changed && activeConnPromise) {
     activeConnPromise.then(c => c?.close()).catch(() => {})
     activeConnPromise = null
   }
@@ -884,5 +895,6 @@ module.exports = {
   normalizeTrackerExtra,
   connectAndLogin,
   configureNativeSession,
+  nativeOptsChanged,
   ensureNativeSession
 }

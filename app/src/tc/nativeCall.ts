@@ -17,7 +17,7 @@ export interface CallMedia { audio: boolean; video: boolean; audioDeviceId?: str
 
 type Events = {
   state: (s: NativeCallState, reason?: string) => void
-  incoming: (info: { conference: string; caller: string; audioOnly: boolean }) => void
+  incoming: (info: { conference: string; caller: string; displayName?: string; audioOnly: boolean }) => void
   remoteStream: (s: MediaStream) => void
   localStream: (s: MediaStream) => void
 }
@@ -30,6 +30,8 @@ export class NativeCall {
   peer = ''
   // Полный экземпляр пира (user@srv/inst) — из поля id его SDP/ICE; до этого шлём на callId.
   private peerInstance = ''
+  // Завершённая конференция: её запоздавшие повторы Invite не поднимают окно снова.
+  private endedConference = ''
   private pc?: RTCPeerConnection
   private local?: MediaStream
   private ice: RTCIceServer[] = []
@@ -115,9 +117,12 @@ export class NativeCall {
         }
         break
       case 'invite':
+        // Сервер шлёт Invite дважды (Hops 4 и 5 — два маршрута): повтор той же конференции пропускаем.
+        if (ev.conference === this.conference && this.state !== 'idle' && this.state !== 'ended') break
+        if (ev.conference === this.endedConference) break
         this.conference = ev.conference; this.peer = ev.caller
         this.setState('incoming')
-        this.emit('incoming', { conference: ev.conference, caller: ev.caller, audioOnly: ev.audioOnly })
+        this.emit('incoming', { conference: ev.conference, caller: ev.caller, displayName: ev.displayName, audioOnly: ev.audioOnly })
         // Как оф. клиент: сразу сообщаем серверу «звонит» (CallId = мы, CallID2 = звонящий).
         this.send('ringing', { conference: ev.conference, me: this.self.callId, caller: ev.caller })
         break
@@ -194,6 +199,7 @@ export class NativeCall {
     this.pc?.close(); this.pc = undefined
     this.local?.getTracks().forEach(t => t.stop()); this.local = undefined
     this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''
+    if (this.conference) this.endedConference = this.conference
     if (this.state !== 'ended') this.setState('ended', reason)
   }
 }

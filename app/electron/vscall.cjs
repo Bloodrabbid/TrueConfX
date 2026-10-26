@@ -168,7 +168,7 @@ function parseIncoming (m) {
     switch (method) {
       case 'Invite':
       case 'InviteToMulti':
-        return { kind: 'invite', conference: str(d.Conference), caller: str(d.Name || d.CallId), audioOnly: 'AudioOnly' in d }
+        return { kind: 'invite', conference: str(d.Conference), caller: str(d.Name || d.CallId), displayName: str(d.DisplayName), audioOnly: 'AudioOnly' in d }
       case 'Ringing':
         return { kind: 'ringing', conference: str(d.Conference), peer: str(d.CallId) }
       case 'Accept':

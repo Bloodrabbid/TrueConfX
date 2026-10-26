@@ -1,7 +1,7 @@
 export type NativeCallKind = 'createConference' | 'invite' | 'ringing' | 'accept' | 'reject' | 'hangup' | 'sdp' | 'candidate'
 
 export type NativeCallEvent =
-  | { kind: 'invite'; conference: string; caller: string; audioOnly: boolean }
+  | { kind: 'invite'; conference: string; caller: string; displayName?: string; audioOnly: boolean }
   | { kind: 'ringing'; conference: string; peer: string }
   | { kind: 'accept'; conference: string; peer: string }
   | { kind: 'reject'; conference: string; peer: string; cause: number }
