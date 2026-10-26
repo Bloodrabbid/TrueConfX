@@ -155,7 +155,11 @@ app.whenReady().then(() => {
     return vs.ensureNativeSession().then(conn => {
       if (!conn._tcxBound) {
         conn._tcxBound = true
+        // Журнал нативной сессии (обе стороны) для разбора звонков: ~/Library/Logs/TrueConfX/native-wire.jsonl
+        const origSend = conn.sendApp.bind(conn)
+        conn.sendApp = (fields, opts) => { wireLog('TX', { service: opts && opts.service, to: opts && opts.to, data: vs.fieldsToObject(fields) }); return origSend(fields, opts) }
         conn.onMessage(m => {
+          wireLog('RX', { service: m.service, from: m.from, to: m.to, data: m.data })
           win?.webContents.send('native-event', {
             id: m.id,
             from: m.from,
@@ -249,3 +253,19 @@ app.whenReady().then(() => {
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
+
+// Пишет сообщение нативной сессии в JSONL; секреты маскирует, длинные буферы укорачивает.
+const WIRE_SECRET = /^(Key|Password|Hash|Cookie|Credentials|SecureKey|Token|AuthKey)$/i
+function wireLog (dir, msg) {
+  try {
+    const dirPath = path.join(app.getPath('logs'))
+    fs.mkdirSync(dirPath, { recursive: true })
+    const data = {}
+    for (const [k, v] of Object.entries(msg.data || {})) {
+      if (WIRE_SECRET.test(k)) data[k] = '<скрыто>'
+      else if (Buffer.isBuffer(v)) data[k] = { bytes: v.length, hex: v.slice(0, 64).toString('hex') }
+      else data[k] = v
+    }
+    fs.appendFileSync(path.join(dirPath, 'native-wire.jsonl'), JSON.stringify({ t: new Date().toISOString(), dir, ...msg, data }, (_k, v) => typeof v === 'bigint' ? String(v) : v) + '\n')
+  } catch {}
+}
