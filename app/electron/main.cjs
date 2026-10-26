@@ -195,6 +195,9 @@ app.whenReady().then(() => {
         conn.sendApp = (fields, opts) => { wireLog('TX', { service: opts && opts.service, to: opts && opts.to, data: vs.fieldsToObject(fields) }); return origSend(fields, opts) }
         conn.onMessage(m => {
           wireLog('RX', { service: m.service, from: m.from, to: m.to, data: m.data })
+          const meth = Array.isArray(m.data?.Method) ? m.data.Method[0] : m.data?.Method
+          const p = pendingStreamProbe
+          if (p && meth === 'Accept' && String(m.data.Conference) === p.conference) { pendingStreamProbe = null; startStreamProbe(p.conference, p.me, p.peer) }
           win?.webContents.send('native-event', {
             id: m.id,
             from: m.from,
@@ -266,7 +269,9 @@ app.whenReady().then(() => {
       conn.sendApp(fields, opts)
       // План А, разведка: после Accept без WebRTC звонящий ждёт нативные потоки. Пробуем открыть их
       // и снимаем ответ сервера и сырые байты в журнал (SPEC-native-media.md). Сами пока ничего не шлём.
-      if (kind === 'accept' && !args.directConnect && native) startStreamProbe(String(args.conference), String(native), String(args.caller))
+      // Потоки открываем по эху Accept от сервера (оф. клиент — из parseAccept, FUN_1002eb610): раньше
+      // сервер ещё не знает участника и рвёт поток (живой журнал 13:03 — эхо пришло через 0,9 с).
+      if (kind === 'accept' && !args.directConnect && native) pendingStreamProbe = { conference: String(args.conference), me: String(native), peer: String(args.caller) }
       return { ok: true }
     } catch (err) {
       return { ok: false, error: String(err && err.message || err) }
@@ -307,6 +312,7 @@ app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWind
 
 // Пишет сообщение нативной сессии в JSONL; секреты маскирует, длинные буферы укорачивает.
 const WIRE_SECRET = /^(Key|Password|Hash|Cookie|Credentials|SecureKey|Token|AuthKey)$/i
+let pendingStreamProbe = null
 function startStreamProbe (conference, me, peer) {
   const host = vsstream.confHost(conference)
   if (!host || !peer) return
