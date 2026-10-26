@@ -27,6 +27,42 @@ const { appMessage, fieldsToObject } = require('./vssession.cjs')
 const SRV_CONF = 'CONFERENCE'
 const SRV_CLIENT = 'CLIENT'
 
+// ClientCaps — возможности клиента (контейнер в Invite/Accept). Оф. клиент кладёт его в Accept
+// всегда (FUN_1002bec60). Поля и значения — из живого Invite TrueConf OS X 8.5.5 (26.10.2026):
+// без них звонящий удалял конференцию через 5 с после нашего Accept (Cause=21).
+// Строка: [имя, тип VS_Variant (1=u32, 3=строка, 4=байты hex), значение].
+const CLIENT_CAPS = [
+  ['IntCaps', 1, 1],
+  ['StrmDirC', 1, 62],
+  ['VideoRcv', 1, 431],
+  ['VideoSnd', 1, 7],
+  ['AudioRcv', 1, 15],
+  ['AudioSnd', 1, 15],
+  ['Rating', 1, 870],
+  ['Level', 1, 91],
+  ['LevelGroup', 1, 98],
+  ['ScreenWidth', 1, 1920],
+  ['ScreenHeight', 1, 1080],
+  ['ClientType', 1, 0],
+  ['VadVersionMin', 1, 1],
+  ['VadVersionMax', 1, 1],
+  ['AppName', 3, 'TrueConf OS X'],
+  ['AppVersion', 3, '8.5.5'],
+  ['ClientFlags', 1, 7027],
+  ['MediaFmt', 4, '30000000680100008002000070763830803e0000f07f0000000500001e00000000000000000000000000000001000000'],
+  ['BandWRcv', 1, 4096],
+  ['AudioCdc', 4, 'f07f0470037006a106000700017002700570067007706500420041008300087009705500'],
+  ['VideoCdc', 4, '70763830683236316832363368323670766836347636346d7636346876683635'],
+]
+// Поля VS_Variant для vsvariant.serialize (кладётся в ClientCaps как контейнер).
+function clientCapsFields () {
+  return CLIENT_CAPS.map(([name, type, val]) => {
+    if (type === 1) { const b = Buffer.alloc(4); b.writeUInt32LE(val >>> 0); return { name, type, value: b } }
+    if (type === 3) return { name, type, value: Buffer.from(val, 'utf8') }
+    return { name, type, value: Buffer.from(val, 'hex') }
+  })
+}
+
 // Вид WebRTC-сообщения (байт 0 структуры, диспетчер FUN_10029df80).
 const WEBRTC_OFFER = 0 // KNOWN? 0/1 — SDP; какой из них offer, уточнить живым звонком
 const WEBRTC_ANSWER = 1
@@ -85,7 +121,7 @@ function ringing ({ conference, me, caller } = {}) {
 
 // Принять звонок. Разбор FUN_1002bec60: Conference и Name берутся из сохранённого Invite,
 // т.е. Name = экземпляр ЗВОНЯЩЕГО; UserName = наш логин; AppId — только если есть.
-function accept ({ conference, caller, myName, me, appId, directConnect = 1, clientCaps, symKey } = {}) {
+function accept ({ conference, caller, myName, me, appId, directConnect = 1, clientCaps = clientCapsFields(), symKey } = {}) {
   const e = [
     ['Conference', conference],
     ['Name', caller || myName],
@@ -216,7 +252,7 @@ function num (v) {
 }
 
 module.exports = {
-  SRV_CONF, SRV_CLIENT, WEBRTC_OFFER, WEBRTC_ANSWER, WEBRTC_CANDIDATE, CLIENT_RTC_VERSION, RTC_VERSION, P2P,
+  SRV_CONF, SRV_CLIENT, CLIENT_CAPS, clientCapsFields, WEBRTC_OFFER, WEBRTC_ANSWER, WEBRTC_CANDIDATE, CLIENT_RTC_VERSION, RTC_VERSION, P2P,
   createConference, invite, ringing, accept, reject, hangup,
   webrtcSdp, webrtcCandidate, build,
   parseIncoming, parseIceConfiguration,

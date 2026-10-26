@@ -848,6 +848,9 @@ function configureNativeSession (opts = {}) {
   }
 }
 
+// Есть ли открытая (или открывающаяся) нативная сессия.
+function hasNativeSession () { return !!activeConnPromise }
+
 async function ensureNativeSession (opts = {}) {
   const merged = { ...activeConnOpts, ...opts }
   if (activeConnPromise) {
@@ -896,5 +899,6 @@ module.exports = {
   connectAndLogin,
   configureNativeSession,
   nativeOptsChanged,
+  hasNativeSession,
   ensureNativeSession
 }

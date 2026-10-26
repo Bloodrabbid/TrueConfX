@@ -74,6 +74,19 @@ function wire ({ fields, opts }) {
   assert.ok(!('AppId' in g.data), 'AppId не шлём, если его нет')
 }
 
+// 4г) Accept несёт ClientCaps: контейнер разворачивается в поля живого Invite 8.5.5.
+{
+  const g = wire(vc.accept({ conference: 'f@tc3.t2.ru#vcs', caller: 'peer@tc3.t2.ru/c6', me: 'me@tc.t2.ru/36' }))
+  const capsField = g.fields.find(f => f.name === 'ClientCaps')
+  assert.ok(capsField, 'ClientCaps есть в Accept')
+  const caps = vv.deserialize(capsField.value)
+  assert.deepStrictEqual(caps.map(f => f.name), vc.CLIENT_CAPS.map(r => r[0]), 'порядок полей ClientCaps = живой кадр')
+  const get = n => caps.find(f => f.name === n)
+  assert.strictEqual(get('ClientFlags').value.readUInt32LE(0), 7027)
+  assert.strictEqual(get('AppName').value.toString(), 'TrueConf OS X')
+  assert.strictEqual(get('VideoCdc').value.length, 32)
+}
+
 // 5) Hangup: Conference, Name, HangupFlags
 {
   const g = wire(vc.hangup({ conference: 'c', me: 'kirill@tc.t2.ru' }))

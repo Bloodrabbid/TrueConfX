@@ -164,10 +164,11 @@ app.whenReady().then(() => {
       return null
     }
   }
-  const startBackgroundNativeSession = (opts = {}) => {
-    const eff = (opts.server || opts.login || opts.password || opts.key)
-      ? opts
-      : (readStoredCredentials() || opts)
+  // reuse: true — для IPC-вызовов: живую сессию не трогаем и сохранённые настройки не перечитываем.
+  // Иначе первый же Ringing мог открыть новую сессию с новым экземпляром (журнал 26.10.2026).
+  const startBackgroundNativeSession = (opts = {}, { reuse = false } = {}) => {
+    const explicit = opts.server || opts.login || opts.password || opts.key
+    const eff = explicit ? opts : (reuse && vs.hasNativeSession() ? {} : (readStoredCredentials() || opts))
     if (eff.server || eff.login || eff.password || eff.key) {
       const fallbackHost = eff.login && String(eff.login).includes('@')
         ? String(eff.login).split('@')[1].split('/')[0]
@@ -232,13 +233,13 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('ensure-media-access', () => ensureMediaAccess())
   ipcMain.handle('native-status', async () => {
-    const conn = await startBackgroundNativeSession()
+    const conn = await startBackgroundNativeSession({}, { reuse: true })
     return conn ? { connected: conn.isAlive(), realm: conn.realm, sessionId: conn.sessionId, account: conn.account } : { connected: false }
   })
   // Исходящий сигналинг звонка: renderer присылает { kind, args }, main строит
   // сообщение (vscall) и шлёт его по живой нативной сессии.
   ipcMain.handle('native-call', async (_e, kind, args = {}) => {
-    const conn = await startBackgroundNativeSession()
+    const conn = await startBackgroundNativeSession({}, { reuse: true })
     if (!conn || !conn.isAlive()) return { ok: false, error: 'нет нативной сессии' }
     try {
       // SendWebrtcMsg: id = экземпляр ОТПРАВИТЕЛЯ (живой кадр 26.10.2026). Это экземпляр
