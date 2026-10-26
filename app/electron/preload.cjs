@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('native', {
   call: (kind, args) => ipcRenderer.invoke('native-call', kind, args),
   ensureMediaAccess: () => ipcRenderer.invoke('ensure-media-access'),
   callLog: (data) => ipcRenderer.send('call-log', data),
+  getIceServers: () => ipcRenderer.invoke('get-ice-servers'),
   onCallEvent: cb => listen('call-event', cb),
   onCallIceServers: cb => listen('call-ice-servers', cb),
   getUpdateState: () => ipcRenderer.invoke('update-get'),

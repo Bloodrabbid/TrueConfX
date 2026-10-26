@@ -49,6 +49,8 @@ function installCorsBridge(ses) {
 const MEDIA_LABEL = { camera: 'камере', microphone: 'микрофону' }
 const MEDIA_PANE = { camera: 'Privacy_Camera', microphone: 'Privacy_Microphone' }
 let mediaWatch
+// Последний список STUN/TURN из SetTurnConfiguration.
+let lastIceServers = []
 async function ensureMediaAccess () {
   if (process.platform !== 'darwin') return { camera: true, microphone: true }
   const res = {}
@@ -206,7 +208,7 @@ app.whenReady().then(() => {
             if (call) win?.webContents.send('call-event', call)
             if (m.data && (m.data.TurnConfiguration || m.data.IceConfiguration || m.data.iceConfiguration)) {
               const ice = vscall.parseIceConfiguration(m.data)
-              if (ice.length) win?.webContents.send('call-ice-servers', ice)
+              if (ice.length) { lastIceServers = ice; win?.webContents.send('call-ice-servers', ice) }
             }
           } catch {}
         })
@@ -237,6 +239,8 @@ app.whenReady().then(() => {
     return { ok: true, realm: conn.realm, sessionId: conn.sessionId, account: conn.account }
   })
   ipcMain.handle('ensure-media-access', () => ensureMediaAccess())
+  // SetTurnConfiguration приходит сразу после входа — раньше, чем renderer создаёт звонок; отдаём сохранённый.
+  ipcMain.handle('get-ice-servers', () => lastIceServers)
   // Диагностика звонка из renderer (состояния RTCPeerConnection, ошибки) — в тот же журнал.
   ipcMain.on('call-log', (_e, data) => wireLog('PC', { service: 'PC', data }))
   ipcMain.handle('native-status', async () => {

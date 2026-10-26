@@ -45,6 +45,8 @@ export class NativeCall {
     const n = window.native
     if (n?.onCallEvent) this.offItems.push(n.onCallEvent(ev => this.onSignal(ev)))
     if (n?.onCallIceServers) this.offItems.push(n.onCallIceServers(list => { if (list?.length) this.ice = list }))
+    // Список мог прийти до создания звонка (сразу после входа) — забираем сохранённый.
+    n?.getIceServers?.().then(list => { if (list?.length && !this.ice.length) this.ice = list }).catch(() => {})
   }
 
   on<K extends keyof Events>(ev: K, fn: Events[K]) {
@@ -161,6 +163,7 @@ export class NativeCall {
   private setupPc() {
     if (this.pc) return
     const pc = new RTCPeerConnection({ iceServers: this.ice.length ? this.ice : STUN_FALLBACK, bundlePolicy: 'max-bundle' })
+    window.native?.callLog?.({ ev: 'ice-servers', n: this.ice.length, turn: this.ice.filter(s => String(s.urls).startsWith('turn')).length })
     this.pc = pc
     // Как у оф. клиента (журнал 26.10.2026): каждая сторона предлагает только отправку своих потоков,
     // чужие приходят его offer'ом с sendonly. Наши медиалинии sendrecv звонящий отклонял (порт 0).

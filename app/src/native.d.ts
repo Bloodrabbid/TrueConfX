@@ -43,6 +43,7 @@ declare global {
       call?: (kind: NativeCallKind, args: Record<string, any>) => Promise<{ ok: boolean; error?: string }>
       ensureMediaAccess?: () => Promise<{ camera: boolean; microphone: boolean }>
       callLog?: (data: Record<string, any>) => void
+      getIceServers?: () => Promise<RTCIceServer[]>
       onCallEvent?: (cb: (ev: NativeCallEvent) => void) => () => void
       onCallIceServers?: (cb: (servers: RTCIceServer[]) => void) => () => void
       getUpdateState?: () => Promise<UpdateState>
