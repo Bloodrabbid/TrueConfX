@@ -313,19 +313,11 @@ function startStreamProbe (conference, me, peer) {
   const dir = app.getPath('logs')
   const log = data => wireLog('STREAM', { service: 'STREAM', data })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  // Тело запроса по разбору: conf, s=я, r=пир, ep=я — у обоих потоков (FUN_10015df00). Журнал оф. клиента
-  // пишет у получателя «s = пир r = я», поэтому при отказе получателю пробуем и такой порядок.
+  // s = кто шлёт медиа, r = кто принимает (живой журнал звонящего 26.10.2026: его отправитель
+  // «s = он r = мы», получатель «s = мы r = он»). Получатель с s = мы сервер принимал за дубль
+  // нашего же потока к звонящему и рвал оба. ep = свой экземпляр.
   vsstream.probeStream({ host, conf: conference, s: me, r: peer, ep: me, type: vsstream.STREAM_SENDER, dumpPath: path.join(dir, `stream-send-${stamp}.bin`), log })
-  const recv = (s, r, tag) => vsstream.probeStream({
-    host, conf: conference, s, r, ep: me, type: vsstream.STREAM_RECEIVER, dumpPath: path.join(dir, `stream-recv${tag}-${stamp}.bin`),
-    log: d => {
-      log({ ...d, variant: tag })
-      const failed = (d.ev === 'stream-answer' && !d.ok) || (d.ev === 'stream-close' && !d.shaken)
-      if (tag === 'A' && failed && !triedB) { triedB = true; recv(peer, me, 'B') }
-    }
-  })
-  let triedB = false
-  recv(me, peer, 'A')
+  vsstream.probeStream({ host, conf: conference, s: peer, r: me, ep: me, type: vsstream.STREAM_RECEIVER, dumpPath: path.join(dir, `stream-recv-${stamp}.bin`), log })
 }
 
 function wireLog (dir, msg) {
