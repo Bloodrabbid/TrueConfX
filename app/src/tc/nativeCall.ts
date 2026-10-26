@@ -112,7 +112,13 @@ export class NativeCall {
   private route() { return { id: this.self.instance, to: this.peerInstance || this.peer } }
 
   // --- приём сигналинга ---
-  private async onSignal(ev: NativeCallEvent) {
+  // Строго по очереди: повторный offer звонящего не должен накладываться на обработку предыдущего.
+  private signalChain: Promise<void> = Promise.resolve()
+  private onSignal(ev: NativeCallEvent) {
+    this.signalChain = this.signalChain.then(() => this.handleSignal(ev)).catch(e => window.native?.callLog?.({ ev: 'signal-error', kind: ev.kind, err: String(e?.message ?? e).slice(0, 200) }))
+    return this.signalChain
+  }
+  private async handleSignal(ev: NativeCallEvent) {
     if ((ev.kind === 'sdp' || ev.kind === 'candidate') && ev.id) this.peerInstance = ev.id
     switch (ev.kind) {
       case 'created':
@@ -170,14 +176,22 @@ export class NativeCall {
       })
     }
     const log = (ev: string, extra: Record<string, any> = {}) => window.native?.callLog?.({ ev, conn: pc.connectionState, ice: pc.iceConnectionState, sig: pc.signalingState, ...extra })
-    pc.oniceconnectionstatechange = () => { log('ice'); if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'failed') this.logPair(pc) }
+    pc.oniceconnectionstatechange = () => {
+      log('ice')
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'failed') {
+        this.logPair(pc)
+        // Замер транспорта 5 раз через 2 с: идёт ли DTLS и приходят ли байты от звонящего.
+        for (let i = 0; i <= 4; i++) setTimeout(() => this.logTransport(pc), i * 2000)
+      }
+    }
     pc.onicegatheringstatechange = () => log('gather', { gather: pc.iceGatheringState })
     pc.onsignalingstatechange = () => log('sig')
     pc.onicecandidateerror = (e: any) => log('cand-error', { code: e.errorCode, text: e.errorText, url: e.url })
     pc.onconnectionstatechange = () => {
       log('conn')
       if (pc.connectionState === 'connected') this.setState('live')
-      else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') this.cleanup('разрыв связи')
+      // disconnected — временное состояние WebRTC, из него соединение восстанавливается; закрываем только failed.
+      else if (pc.connectionState === 'failed') this.cleanup('разрыв связи')
     }
     // отложенные remote-сообщения, пришедшие до создания pc
     const q = this.pendingRemote; this.pendingRemote = []
@@ -190,6 +204,17 @@ export class NativeCall {
     const offer = await this.pc.createOffer()
     await this.pc.setLocalDescription(offer)
     await this.send('sdp', { sdp: offer.sdp, type: 0 /* WEBRTC_OFFER, LIVE-PENDING */, conference: this.conference, ...this.route() })
+  }
+
+  // Транспорт: состояние и роль DTLS, счётчики байт и пакетов (без адресов и ключей).
+  private async logTransport(pc: RTCPeerConnection) {
+    try {
+      const st = await pc.getStats()
+      st.forEach((r: any) => {
+        if (r.type === 'transport') window.native?.callLog?.({ ev: 'transport', dtls: r.dtlsState, role: r.dtlsRole, ice: r.iceState, srtp: r.srtpCipher, tx: r.bytesSent, rx: r.bytesReceived, pktRx: r.packetsReceived })
+        if (r.type === 'inbound-rtp') window.native?.callLog?.({ ev: 'inbound', kind: r.kind, pkts: r.packetsReceived, bytes: r.bytesReceived })
+      })
+    } catch {}
   }
 
   // Какая пара кандидатов выбрана (типы и протокол, без адресов) — в журнал.
@@ -207,7 +232,8 @@ export class NativeCall {
   private async onRemoteSdp(ev: Extract<NativeCallEvent, { kind: 'sdp' }>) {
     this.remoteSdpSeen = true
     window.native?.callLog?.({ ev: 'remote-sdp', type: ev.sdpType, sig: this.pc?.signalingState })
-    if (!this.pc) { this.pendingRemote.push(ev); this.setupPc() }
+    // Без постановки в очередь: setupPc проигрывает очередь, и тот же offer применился бы дважды.
+    if (!this.pc) this.setupPc()
     const pc = this.pc!
     try {
       await pc.setRemoteDescription({ type: ev.sdpType, sdp: ev.sdp })
