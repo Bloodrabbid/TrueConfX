@@ -213,6 +213,7 @@ app.whenReady().then(() => {
         try { conn.updateStatus(1) } catch {}
         // Как оф. клиент после входа: запрос свойств у NET_CONFIG. Проверяем, пришлёт ли сервер
         // за ним SetTurnConfiguration (без TURN медиа между домашней сетью и сетью t2 не сходится).
+        try { conn.updateConfiguration() } catch {}
         try { conn.getAppProps().catch(() => {}) } catch {}
       }
       return conn

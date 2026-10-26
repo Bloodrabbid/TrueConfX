@@ -427,6 +427,37 @@ function getLocalEndpoints (port = 6881) {
   return out.length ? `${out.join(';')};` : `127.0.0.1:${port};`
 }
 
+// IPConfig для NET_CONFIG UpdateConfiguration — точка подключения клиента (VS_NetConfigManager.cpp,
+// конструктор FUN_1001ad040, упаковка FUN_1001ad980). Раскладка:
+//   [u32 сумма] [стр host] [u16 port] [стр proto] [стр ""] [u16 1080] [стр ""] [стр ""] [u8 4] [стр ""] [u16 8080] [стр ""] [стр ""]
+//   стр = [длина u8][байты][0x00]. 1080/4/8080 — значения прокси по умолчанию из вызова конструктора.
+// Сумма: (n>>2)+(n&3)+0x3d141592 + сумма u32 LE по телу + байты хвоста (n — длина тела без суммы).
+// Сверено с захватом оф. клиента байт в байт (43 Б, сумма 4f29758d).
+function ipConfigChecksum (body) {
+  const n = body.length
+  let s = ((n >>> 2) + (n & 3) + 0x3d141592) >>> 0; let i = 0
+  for (; i + 4 <= n; i += 4) s = (s + body.readUInt32LE(i)) >>> 0
+  for (; i < n; i++) s = (s + body[i]) >>> 0
+  return s
+}
+function buildIpConfig ({ host, port = 44307, proto = 'Tcp' } = {}) {
+  const str = v => { const b = Buffer.from(String(v || ''), 'latin1'); return Buffer.concat([Buffer.from([b.length]), b, Buffer.from([0])]) }
+  const u16 = v => { const b = Buffer.alloc(2); b.writeUInt16LE(v & 0xffff); return b }
+  const body = Buffer.concat([
+    str(host), u16(port), str(proto), str(''), u16(0x438), str(''), str(''),
+    Buffer.from([4]), str(''), u16(0x1f90), str(''), str('')
+  ])
+  const sum = Buffer.alloc(4); sum.writeUInt32LE(ipConfigChecksum(body))
+  return Buffer.concat([sum, body])
+}
+// IPv4 основного интерфейса (оф. клиент указывает адрес локальной сети, не VPN).
+function primaryIPv4 () {
+  const nets = os.networkInterfaces()
+  const all = []
+  for (const [name, list] of Object.entries(nets)) for (const i of list || []) if (i.family === 'IPv4' && !i.internal) all.push({ name, address: i.address })
+  return (all.find(a => /^en\d/.test(a.name)) || all[0] || { address: '127.0.0.1' }).address
+}
+
 // Разобрать строку пиров "ip:port;ip:port;..." из PeersListParam / BCPeersListParam (FUN_102c1fce0 → FUN_102c1ea70).
 function parsePeerEndpoints (str) {
   if (!str || typeof str !== 'string') return []
@@ -617,6 +648,11 @@ function connectAndLogin (opts = {}) {
         sendApp(fields, { from: 'TORRENT', service: 'TORRENT', to: '', extra, timeout: 20000 })
       })
     }
+
+    // Как оф. клиент: сообщить серверу свою точку подключения. Без этого сервер не присылал
+    // SetTurnConfiguration (TURN), а у оф. клиента он приходит сразу следом (журнал PRTCL 26.10.2026).
+    const updateConfiguration = ({ host = primaryIPv4(), port = 44307 } = {}) =>
+      sendApp(appMessage('UpdateConfiguration', [['IPConfig', buildIpConfig({ host, port })]]), { service: 'NET_CONFIG' })
 
     const getAppProps = ({ clientVersion = '8.3.2.154', name = appName, timeoutMs: reqTimeout = 6000 } = {}) => {
       return new Promise((res, rej) => {
@@ -829,6 +865,7 @@ function connectAndLogin (opts = {}) {
           sendApp,
           trackerAnnounce,
           getAppProps,
+          updateConfiguration,
           getCurrentTime,
           updateStatus,
           searchAddressBook,
@@ -920,6 +957,8 @@ module.exports = {
   formatLoginPassword,
   buildLoginUserMessage,
   getLocalEndpoints,
+  buildIpConfig,
+  ipConfigChecksum,
   parsePeerEndpoints,
   buildTrackerAnnounceMessage,
   parseTrackerAnnounceResponse,
