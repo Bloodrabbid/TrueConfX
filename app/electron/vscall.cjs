@@ -199,7 +199,8 @@ function build (kind, args = {}) {
 // Возвращает { kind, ...поля } или null, если не про звонок.
 function parseIncoming (m) {
   const d = m.data || {}
-  const method = d.Method
+  // Сервер при пересылке дублирует Method: приходит массив ["SendWebrtcMsg","SendWebrtcMsg"] (журнал 26.10.2026).
+  const method = Array.isArray(d.Method) ? d.Method[0] : d.Method
   if (m.service === SRV_CONF || method === 'Invite' || method === 'InviteToMulti') {
     switch (method) {
       case 'Invite':

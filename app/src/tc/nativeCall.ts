@@ -156,7 +156,9 @@ export class NativeCall {
     if (this.pc) return
     const pc = new RTCPeerConnection({ iceServers: this.ice.length ? this.ice : STUN_FALLBACK, bundlePolicy: 'max-bundle' })
     this.pc = pc
-    for (const track of this.local?.getTracks() ?? []) pc.addTrack(track, this.local!)
+    // Как у оф. клиента (журнал 26.10.2026): каждая сторона предлагает только отправку своих потоков,
+    // чужие приходят его offer'ом с sendonly. Наши медиалинии sendrecv звонящий отклонял (порт 0).
+    for (const track of this.local?.getTracks() ?? []) pc.addTransceiver(track, { direction: 'sendonly', streams: [this.local!] })
     const remote = new MediaStream()
     pc.ontrack = e => { remote.addTrack(e.track); this.emit('remoteStream', remote) }
     pc.onicecandidate = e => {

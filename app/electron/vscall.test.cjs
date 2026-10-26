@@ -87,6 +87,13 @@ function wire ({ fields, opts }) {
   assert.strictEqual(get('VideoCdc').value.length, 32)
 }
 
+// 4д) Method продублирован сервером (массив) — offer всё равно распознаётся.
+{
+  const ev = vc.parseIncoming({ service: 'CLIENT', data: { Method: ['SendWebrtcMsg', 'SendWebrtcMsg'], Type: 0, SdpParam: 'v=0 offer', Conference: 'c1', id: 'peer/1' } })
+  assert.ok(ev, 'массив Method распознан')
+  assert.strictEqual(ev.kind, 'sdp'); assert.strictEqual(ev.sdpType, 'offer'); assert.strictEqual(ev.id, 'peer/1')
+}
+
 // 5) Hangup: Conference, Name, HangupFlags
 {
   const g = wire(vc.hangup({ conference: 'c', me: 'kirill@tc.t2.ru' }))
