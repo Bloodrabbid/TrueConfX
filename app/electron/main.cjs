@@ -313,11 +313,20 @@ function startStreamProbe (conference, me, peer) {
   const dir = app.getPath('logs')
   const log = data => wireLog('STREAM', { service: 'STREAM', data })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  // s = кто шлёт медиа, r = кто принимает (живой журнал звонящего 26.10.2026: его отправитель
-  // «s = он r = мы», получатель «s = мы r = он»). Получатель с s = мы сервер принимал за дубль
-  // нашего же потока к звонящему и рвал оба. ep = свой экземпляр.
+  // Оба запроса: conf, s = я, r = пир, ep = я; отличается только байт типа (FUN_10015df00 → FUN_1001ba500,
+  // этап 2b). Строка журнала «init for s = пир r = я» у получателя печатает другие поля — не состав запроса.
+  // Запрос с s = пир совпадает с получателем звонящего, и сервер выбивает один из них.
   vsstream.probeStream({ host, conf: conference, s: me, r: peer, ep: me, type: vsstream.STREAM_SENDER, dumpPath: path.join(dir, `stream-send-${stamp}.bin`), log })
-  vsstream.probeStream({ host, conf: conference, s: peer, r: me, ep: me, type: vsstream.STREAM_RECEIVER, dumpPath: path.join(dir, `stream-recv-${stamp}.bin`), log })
+  // Получатель: при закрытии без ответа — переподключение через 1 с, как оф. клиент («Reconnecting … delay 0» через ~1 с).
+  let tries = 0
+  const recv = () => {
+    const n = ++tries
+    vsstream.probeStream({
+      host, conf: conference, s: me, r: peer, ep: me, type: vsstream.STREAM_RECEIVER, dumpPath: path.join(dir, `stream-recv${n}-${stamp}.bin`),
+      log: d => { log({ ...d, try: n }); if (d.ev === 'stream-close' && !d.shaken && n < 5) setTimeout(recv, 1000) }
+    })
+  }
+  recv()
 }
 
 function wireLog (dir, msg) {
