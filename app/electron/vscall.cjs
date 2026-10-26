@@ -98,6 +98,14 @@ function createConference ({ name = '', password = '', chatId = '', clientCaps }
 
 // Пригласить пира в звонок. conference — id конференции, peer — CallId вызываемого,
 // myName — моё отображаемое имя/CallId.
+// Адрес CONFERENCE-сообщений Invite/Accept/Reject: пользователь в конверте пуст, сервер = часть id
+// конференции после '@' (FUN_100225030 → FUN_100224ed0(msg, CONFERENCE, 0, сервер)). Живой журнал звонящего
+// 26.10.2026: Accept с to = id конференции до него не дошёл ни разу.
+function confServer (conference) {
+  const at = String(conference || '').indexOf('@')
+  return at < 0 ? '' : String(conference).slice(at + 1)
+}
+
 function invite ({ conference, peer, myName, audioOnly = false, directConnect = 1, clientCaps } = {}) {
   const e = [
     ['Conference', conference],
@@ -107,7 +115,7 @@ function invite ({ conference, peer, myName, audioOnly = false, directConnect = 
   if (audioOnly) e.push(['AudioOnly', flag()])
   e.push(['DirectConnect', u32(directConnect)])
   if (clientCaps) e.push(['ClientCaps', { t: 'container', v: clientCaps }])
-  return { fields: appMessage('Invite', e), opts: { service: SRV_CONF, to: conference } }
+  return { fields: appMessage('Invite', e), opts: { service: SRV_CONF, to: '', extra: confServer(conference) } }
 }
 
 // Звоним-отвечаем «идёт вызов» (приёмник → серверу конференции).
@@ -134,7 +142,7 @@ function accept ({ conference, caller, myName, me, appId, directConnect = 0, cli
   e.push(['DirectConnect', u32(directConnect)])
   if (clientCaps) e.push(['ClientCaps', { t: 'container', v: clientCaps }])
   if (symKey) e.push(['SymKey', symKey])
-  return { fields: appMessage('Accept', e), opts: { service: SRV_CONF, to: conference } }
+  return { fields: appMessage('Accept', e), opts: { service: SRV_CONF, to: '', extra: confServer(conference) } }
 }
 
 // Отклонить звонок. cause — код причины (u32).
@@ -145,7 +153,7 @@ function reject ({ conference, caller, me, cause = 0 } = {}) {
     ['Cause', u32(cause)],
     ['UserName', me]
   ]
-  return { fields: appMessage('Reject', e), opts: { service: SRV_CONF, to: conference } }
+  return { fields: appMessage('Reject', e), opts: { service: SRV_CONF, to: '', extra: confServer(conference) } }
 }
 
 // Положить трубку / завершить. result — опц. код, hangupFlags — u32.
@@ -187,7 +195,7 @@ function webrtcCandidate ({ candidate, sdpMid, mLineIndex, conference, id, to, c
 // Диспетчер: по виду действия вернуть { fields, opts } для session.sendApp.
 // Используется IPC-мостом main-процесса (renderer присылает { kind, args }).
 const BUILDERS = {
-  createConference, invite, ringing, accept, reject, hangup,
+  createConference, invite, ringing, accept, reject, hangup, confServer,
   sdp: webrtcSdp, candidate: webrtcCandidate
 }
 function build (kind, args = {}) {

@@ -81,6 +81,20 @@ function wire ({ fields, opts }) {
   assert.strictEqual(g.data.DirectConnect, 7, 'DirectConnect=7 (DIRECT_RTC)')
 }
 
+// 4в3) Invite/Accept/Reject адресованы серверу конференции: to пуст, extra = часть id после '@'
+// (FUN_1002bec60/FUN_1002bb5d0/FUN_1002bce40 → FUN_100225030). С to = id конференции Accept не доходил.
+{
+  const conf = '000f45730f8fda2f@tc3.t2.ru#vcs'
+  for (const g of [
+    wire(vc.accept({ conference: conf, caller: 'peer@tc3.t2.ru/c6', me: 'me@tc.t2.ru/36' })),
+    wire(vc.reject({ conference: conf, caller: 'peer@tc3.t2.ru/c6', me: 'me@tc.t2.ru/36' })),
+    wire(vc.invite({ conference: conf, peer: 'peer@tc3.t2.ru' }))
+  ]) {
+    assert.strictEqual(g.to, '', g.data.Method + ': to пуст')
+    assert.strictEqual(g.extra, 'tc3.t2.ru#vcs', g.data.Method + ': extra = сервер конференции')
+  }
+}
+
 // 4г) Accept несёт ClientCaps: контейнер разворачивается в поля живого Invite 8.5.5.
 {
   const g = wire(vc.accept({ conference: 'f@tc3.t2.ru#vcs', caller: 'peer@tc3.t2.ru/c6', me: 'me@tc.t2.ru/36' }))
