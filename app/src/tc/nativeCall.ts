@@ -22,6 +22,12 @@ type Events = {
   localStream: (s: MediaStream) => void
 }
 
+// Типы прямого соединения VS_ConfPeer (таблица строк 0x105bcb860): 0 NO_DIRECT_CONNECT … 7 DIRECT_RTC.
+const NO_DIRECT_CONNECT = 0
+const DIRECT_RTC = 7
+// Сколько ждать WebRTC до Accept. Звонящий в это время видит «звонит».
+const RTC_WAIT_MS = 15000
+
 const STUN_FALLBACK: RTCIceServer[] = [{ urls: 'stun:stun.trueconf.ru:3478' }]
 
 export class NativeCall {
@@ -73,20 +79,41 @@ export class NativeCall {
   }
 
   // Принять входящий звонок (после события 'incoming').
-  // Accept уходит в любом случае: без камеры — только звук, без звука — без своего медиа.
-  // Name = экземпляр звонящего (из Invite), AppId не шлём — так делает оф. клиент (FUN_1002bec60).
+  // Как оф. клиент (разбор VS_ConfPeer/VS_Conference, 26.10.2026): WebRTC поднимается ДО Accept.
+  //   - FUN_1002e3d90: принимающая сторона при «RTC соединён» отмечает тип DIRECT_RTC (7) успешным;
+  //   - FUN_10034e8a0: DirectConnect в Accept = лучший успешный тип;
+  //   - FUN_1002b07a0: звонящий берёт DirectConnect из Accept как выбранный тип. При 7 он не рвёт
+  //     WebRTC и пускает медиа через него (FUN_1002da300/FUN_1002da6f0), иначе ждёт нативные TCP-потоки.
+  // Поэтому: медиа → offer → ждём connected (до RTC_WAIT_MS) → Accept с 7; не соединилось — Accept с 0.
   async answer(media: CallMedia) {
     this.initiator = false
     this.setState('connecting')
-    const r = await this.send('accept', { conference: this.conference, caller: this.peer, me: this.self.callId })
-    if (!r?.ok) { this.cleanup(`Accept не ушёл: ${r?.error ?? 'нет ответа'}`); return }
     try { await this.openMedia(media) } catch (e: any) {
       try { await this.openMedia({ ...media, video: false }) } catch { this.mediaError = String(e?.message ?? e) }
     }
     this.setupPc()
-    // ПРОБА (LIVE-PENDING «кто шлёт offer»): после Accept звонящий молчал (журнал 26.10.2026).
-    // Если за 2 с от него нет SDP — offer шлём сами; ответ звонящего покажет журнал.
-    setTimeout(() => { if (!this.remoteSdpSeen && this.state === 'connecting') this.makeOffer() }, 2000)
+    if (!this.remoteSdpSeen) await this.makeOffer()
+    const rtc = await this.waitConnected(RTC_WAIT_MS)
+    if (this.state === 'ended') return
+    const directConnect = rtc ? DIRECT_RTC : NO_DIRECT_CONNECT
+    window.native?.callLog?.({ ev: 'accept', directConnect })
+    const r = await this.send('accept', { conference: this.conference, caller: this.peer, me: this.self.callId, directConnect })
+    if (!r?.ok) { this.cleanup(`Accept не ушёл: ${r?.error ?? 'нет ответа'}`); return }
+    if (rtc) this.setState('live')
+  }
+
+  private waitConnected(ms: number) {
+    return new Promise<boolean>(resolve => {
+      const t0 = Date.now()
+      const tick = () => {
+        const pc = this.pc
+        if (!pc || this.state === 'ended') return resolve(false)
+        if (pc.connectionState === 'connected') return resolve(true)
+        if (pc.connectionState === 'failed' || Date.now() - t0 >= ms) return resolve(false)
+        setTimeout(tick, 100)
+      }
+      tick()
+    })
   }
 
   private remoteSdpSeen = false
@@ -192,7 +219,7 @@ export class NativeCall {
     pc.onicecandidateerror = (e: any) => log('cand-error', { code: e.errorCode, text: e.errorText, url: e.url })
     pc.onconnectionstatechange = () => {
       log('conn')
-      if (pc.connectionState === 'connected') this.setState('live')
+      if (pc.connectionState === 'connected' && this.state !== 'connecting') this.setState('live')
       // disconnected — временное состояние WebRTC, из него соединение восстанавливается; закрываем только failed.
       else if (pc.connectionState === 'failed') this.cleanup('разрыв связи')
     }

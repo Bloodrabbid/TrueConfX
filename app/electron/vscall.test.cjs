@@ -75,6 +75,12 @@ function wire ({ fields, opts }) {
   assert.strictEqual(g.data.DirectConnect, 0, 'DirectConnect=0: слушателя прямых входящих нет (FUN_10034e8a0)')
 }
 
+// 4в2) Accept с DIRECT_RTC: 7 доходит до провода как u32 (звонящий выберет WebRTC, FUN_1002b07a0).
+{
+  const g = wire(vc.accept({ conference: 'f@tc3.t2.ru#vcs', caller: 'peer@tc3.t2.ru/c6', me: 'me@tc.t2.ru/36', directConnect: 7 }))
+  assert.strictEqual(g.data.DirectConnect, 7, 'DirectConnect=7 (DIRECT_RTC)')
+}
+
 // 4г) Accept несёт ClientCaps: контейнер разворачивается в поля живого Invite 8.5.5.
 {
   const g = wire(vc.accept({ conference: 'f@tc3.t2.ru#vcs', caller: 'peer@tc3.t2.ru/c6', me: 'me@tc.t2.ru/36' }))

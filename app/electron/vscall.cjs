@@ -123,6 +123,7 @@ function ringing ({ conference, me, caller } = {}) {
 // т.е. Name = экземпляр ЗВОНЯЩЕГО; UserName = наш логин; AppId — только если есть.
 // DirectConnect = FUN_10034e8a0(): 0, если у клиента нет слушателя прямых TCP-входящих (у нас его нет).
 // Раньше слали 1 — звонящий ждал прямого подключения к нам и висел на «ожидании подключения».
+// 7 (DIRECT_RTC) — WebRTC уже соединён до Accept: звонящий пускает медиа через него (FUN_1002b07a0).
 function accept ({ conference, caller, myName, me, appId, directConnect = 0, clientCaps = clientCapsFields(), symKey } = {}) {
   const e = [
     ['Conference', conference],
