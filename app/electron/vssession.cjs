@@ -841,8 +841,10 @@ function nativeOptsChanged (prev = {}, next = {}) {
 // сервер слал Invite новому экземпляру, мы снова отвечали — петля (журнал 26.10.2026).
 function configureNativeSession (opts = {}) {
   const changed = nativeOptsChanged(activeConnOpts, opts)
+  const diff = NATIVE_OPT_KEYS.filter(k => opts[k] !== undefined && opts[k] !== (activeConnOpts || {})[k])
   activeConnOpts = { ...activeConnOpts, ...opts }
   if (changed && activeConnPromise) {
+    lastSessionReason = 'смена настроек: ' + diff.join(',')
     activeConnPromise.then(c => c?.close()).catch(() => {})
     activeConnPromise = null
   }
@@ -851,15 +853,20 @@ function configureNativeSession (opts = {}) {
 // Есть ли открытая (или открывающаяся) нативная сессия.
 function hasNativeSession () { return !!activeConnPromise }
 
+// Почему открыли последнюю сессию — для журнала разбора.
+let lastSessionReason = ''
+function getLastSessionReason () { return lastSessionReason }
+
 async function ensureNativeSession (opts = {}) {
   const merged = { ...activeConnOpts, ...opts }
   if (activeConnPromise) {
     try {
       const c = await activeConnPromise
       if (c && c.isAlive()) return c
-    } catch {}
+      lastSessionReason = c ? `прежняя не жива (destroyed=${c.socket.destroyed} writable=${c.socket.writable})` : 'прежней нет'
+    } catch (e) { lastSessionReason = `прежняя упала: ${e && e.message}` }
     activeConnPromise = null
-  }
+  } else lastSessionReason = lastSessionReason || 'первая сессия'
   activeConnPromise = connectAndLogin(merged).then(conn => {
     conn.socket.once('close', () => {
       if (activeConnPromise) activeConnPromise = null
@@ -900,5 +907,6 @@ module.exports = {
   configureNativeSession,
   nativeOptsChanged,
   hasNativeSession,
+  getLastSessionReason,
   ensureNativeSession
 }

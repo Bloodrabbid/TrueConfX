@@ -82,7 +82,12 @@ export class NativeCall {
       try { await this.openMedia({ ...media, video: false }) } catch { this.mediaError = String(e?.message ?? e) }
     }
     this.setupPc()
+    // ПРОБА (LIVE-PENDING «кто шлёт offer»): после Accept звонящий молчал (журнал 26.10.2026).
+    // Если за 2 с от него нет SDP — offer шлём сами; ответ звонящего покажет журнал.
+    setTimeout(() => { if (!this.remoteSdpSeen && this.state === 'connecting') this.makeOffer() }, 2000)
   }
+
+  private remoteSdpSeen = false
 
   mediaError = ''
 
@@ -180,6 +185,7 @@ export class NativeCall {
   }
 
   private async onRemoteSdp(ev: Extract<NativeCallEvent, { kind: 'sdp' }>) {
+    this.remoteSdpSeen = true
     if (!this.pc) { this.pendingRemote.push(ev); this.setupPc() }
     const pc = this.pc!
     await pc.setRemoteDescription({ type: ev.sdpType, sdp: ev.sdp })
@@ -198,7 +204,7 @@ export class NativeCall {
   private cleanup(reason: string) {
     this.pc?.close(); this.pc = undefined
     this.local?.getTracks().forEach(t => t.stop()); this.local = undefined
-    this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''
+    this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''; this.remoteSdpSeen = false
     if (this.conference) this.endedConference = this.conference
     if (this.state !== 'ended') this.setState('ended', reason)
   }

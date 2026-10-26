@@ -186,6 +186,7 @@ app.whenReady().then(() => {
     return vs.ensureNativeSession().then(conn => {
       if (!conn._tcxBound) {
         conn._tcxBound = true
+        wireLog('SES', { service: 'SESSION', to: conn.account && conn.account.UserName, data: { reason: vs.getLastSessionReason(), explicit: !!explicit, reuse } })
         // Журнал нативной сессии (обе стороны) для разбора звонков: ~/Library/Logs/TrueConfX/native-wire.jsonl
         const origSend = conn.sendApp.bind(conn)
         conn.sendApp = (fields, opts) => { wireLog('TX', { service: opts && opts.service, to: opts && opts.to, data: vs.fieldsToObject(fields) }); return origSend(fields, opts) }
