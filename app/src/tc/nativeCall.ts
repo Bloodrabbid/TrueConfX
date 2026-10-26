@@ -26,7 +26,7 @@ type Events = {
 const NO_DIRECT_CONNECT = 0
 const DIRECT_RTC = 7
 // Сколько ждать WebRTC до Accept. Звонящий в это время видит «звонит».
-const RTC_WAIT_MS = 15000
+const RTC_WAIT_MS = 25000
 
 const STUN_FALLBACK: RTCIceServer[] = [{ urls: 'stun:stun.trueconf.ru:3478' }]
 
@@ -196,12 +196,15 @@ export class NativeCall {
     const pc = new RTCPeerConnection({ iceServers: this.ice.length ? this.ice : STUN_FALLBACK, bundlePolicy: 'max-bundle' })
     window.native?.callLog?.({ ev: 'ice-servers', n: this.ice.length, turn: this.ice.filter(s => String(s.urls).startsWith('turn')).length })
     this.pc = pc
+    const t0 = performance.now()
     // Как у оф. клиента (журнал 26.10.2026): каждая сторона предлагает только отправку своих потоков,
     // чужие приходят его offer'ом с sendonly. Наши медиалинии sendrecv звонящий отклонял (порт 0).
     for (const track of this.local?.getTracks() ?? []) pc.addTransceiver(track, { direction: 'sendonly', streams: [this.local!] })
     const remote = new MediaStream()
     pc.ontrack = e => { remote.addTrack(e.track); this.emit('remoteStream', remote) }
     pc.onicecandidate = e => {
+      // Тип и протокол своего кандидата (без адреса): видно, выделил ли TURN relay.
+      window.native?.callLog?.({ ev: 'local-cand', type: e.candidate?.type ?? 'end', proto: e.candidate?.protocol, t: Math.round(performance.now() - t0) })
       if (!e.candidate) return
       this.send('candidate', {
         candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid ?? '0',
