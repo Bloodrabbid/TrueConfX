@@ -27,6 +27,9 @@ interface State {
   activeChatId?: string
   messages: Record<string, ServerMessage[]>
   unread: Record<string, number>
+  // Кто сейчас «печатает» в чате: chatId → список {кто, вид активности, когда истекает}.
+  typing: Record<string, { callId: string; activity: number; expiresAt: number }[]>
+  notifyTyping: (chatId: string) => void
   // Сколько сообщений прошло фильтр уведомлений — это число на значке приложения.
   alerts: Record<string, number>
   notifyPrefs: NotifyPrefs
@@ -131,6 +134,17 @@ export const useStore = create<State>((set, get) => ({
   showMembers: false,
   showFiles: false,
   unread: {},
+  typing: {},
+  // Шлём «я печатаю» не чаще, чем раз в период из chatActivityIntervals (≈5 с).
+  notifyTyping: chatId => {
+    const c = get().client
+    if (!c || !chatId) return
+    const now = Date.now()
+    const period = (c.activityIntervals?.typing?.[0] ?? 5) * 1000
+    if (now - (lastTypingSent[chatId] ?? 0) < period) return
+    lastTypingSent[chatId] = now
+    c.sendActivity(chatId, 0)
+  },
   alerts: {},
   notifyPrefs: { private: 'all', group: 'all', attention: true, preview: true, chats: {}, ...JSON.parse(localStorage.getItem('tcx.notify') ?? '{}') },
   setNotifyPrefs: p => {
@@ -220,7 +234,7 @@ export const useStore = create<State>((set, get) => ({
     get().nativeCall?.dispose()
     get().client?.logout()
     window.native?.saveCredentials?.('', '', '')
-    set({ client: undefined, rest: undefined, dialog: undefined, account: undefined, chats: [], messages: {}, contacts: [], activeChatId: undefined, conference: undefined, nativeCall: undefined, callState: 'idle', incomingCall: undefined })
+    set({ client: undefined, rest: undefined, dialog: undefined, account: undefined, chats: [], messages: {}, contacts: [], activeChatId: undefined, conference: undefined, nativeCall: undefined, callState: 'idle', incomingCall: undefined, typing: {} })
   },
 
   openChat: async chatId => {
@@ -530,6 +544,26 @@ function pushMessage(m: ServerMessage) {
   useStore.setState({ chats, ...(next ? { messages: { ...s.messages, [m.chatId]: next } } : {}) })
 }
 
+// Троттл отправки «печатаю» по чатам и фоновый сборщик истёкших чужих индикаторов.
+const lastTypingSent: Record<string, number> = {}
+let typingSweeper: ReturnType<typeof setInterval> | undefined
+function startTypingSweeper() {
+  if (typingSweeper) return
+  typingSweeper = setInterval(() => {
+    const now = Date.now()
+    const t = useStore.getState().typing
+    let changed = false
+    const next: typeof t = {}
+    for (const [chatId, list] of Object.entries(t)) {
+      const kept = list.filter(e => e.expiresAt > now)
+      if (kept.length !== list.length) changed = true
+      if (kept.length) next[chatId] = kept
+    }
+    if (changed) useStore.setState({ typing: next })
+    if (!Object.keys(next).length) { clearInterval(typingSweeper); typingSweeper = undefined }
+  }, 1000)
+}
+
 function wireClient(client: TCClient) {
   const st = useStore
   client.on('message', async m => {
@@ -599,6 +633,24 @@ function wireClient(client: TCClient) {
     client.subscribePresence(list.map(c => c.callId))
   })
   client.on('presence', (id, p) => st.setState({ presence: { ...st.getState().presence, [id]: p } }))
+  // «Печатает»: eventType 4 = {chatId, activity:[{callId, activity}]}. Сливаем по callId,
+  // продлеваем срок (из chatActivityIntervals, ≈6 с), сборщик гасит истёкших. Себя пропускаем.
+  client.on('typing', (ev: any) => {
+    const chatId = ev?.chatId
+    const arr = ev?.activity
+    if (!chatId || !Array.isArray(arr)) return
+    const me = st.getState().account?.trueconfId
+    const expireMs = (client.activityIntervals?.typing?.[1] ?? 6) * 1000
+    const now = Date.now()
+    const byId = new Map((st.getState().typing[chatId] ?? []).filter(e => e.callId !== me).map(e => [e.callId, e]))
+    for (const a of arr) {
+      if (!a?.callId || a.callId === me) continue
+      byId.set(a.callId, { callId: a.callId, activity: a.activity ?? 0, expiresAt: now + expireMs })
+    }
+    st.setState({ typing: { ...st.getState().typing, [chatId]: [...byId.values()] } })
+    st.getState().resolveNames(arr.map((a: any) => a?.callId).filter(Boolean))
+    startTypingSweeper()
+  })
   client.on('loggedOut', cause => { st.getState().notify(cause === 1 ? 'Вы вошли с другого устройства' : 'Сессия завершена'); st.getState().logout() })
   client.on('closed', () => { if (st.getState().client === client) reconnect() })
 }

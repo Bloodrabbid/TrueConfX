@@ -68,6 +68,8 @@ export class TCClient {
   sock: TCSocket
   account?: Account
   protocolVersion = 0
+  // Интервалы activity из логина: {"typing":[период_отправки_с, таймаут_гашения_с], …}.
+  activityIntervals: Record<string, [number, number]> = {}
   private sn = 1
   private listeners: { [K in keyof Events]?: Set<Events[K]> } = {}
 
@@ -103,6 +105,7 @@ export class TCClient {
     }
     // trueconfId приходит с суффиксом экземпляра: user@host/5b3fe416. В чатах sender без суффикса.
     this.account = { trueconfId: String(r.trueconfId).split('/')[0], instance: r.trueconfId, displayName: r.displayName, cid: r.CID, rights: r.Rights, session: r.Session, key: r.Key }
+    if (r.chatActivityIntervals && typeof r.chatActivityIntervals === 'object') this.activityIntervals = r.chatActivityIntervals
     this.sock.send({ method: 'clientInfo', appVersion: '5.1.0', device: 'desktop', hardware: navigator.platform, platform: navigator.platform, runtime: 'TrueConfX' })
     return this.account
   }
@@ -230,6 +233,13 @@ export class TCClient {
   messageInfo(messageId: string): Promise<ServerMessage> { return this.chat(CHAT.MESSAGE_INFO, { messageId }) }
   markRead(chatId: string, messageId: string) {
     this.sock.send({ method: 'ChatV2', sn: this.sn++, containerType: 0, messageType: CHAT.READ, payload: { chatId, messageId } })
+  }
+
+  // «Печатает»: сообщаем серверу свою активность в чате. activity 0 = печатает
+  // (подтверждено приёмом eventType 4: {chatId, activity:[{callId, activity}]}).
+  // Отправка — best-effort, ответа не ждём; сервер разошлёт её остальным как eventType 4.
+  sendActivity(chatId: string, activity = 0) {
+    this.sock.send({ method: 'ChatV2', sn: this.sn++, containerType: 0, messageType: CHAT.ACTIVITY, payload: { chatId, activity } })
   }
 
   // ── Адресная книга и присутствие ──────────────────────────────────────

@@ -406,3 +406,6 @@ button.ghost.tiny { padding: 3px; }
 .call-controls .call-btn { width: 48px; height: 48px; background: rgba(255,255,255,.14); }
 .call-controls .call-btn.off { background: #d64545; }
 .call-controls .call-btn.reject { background: #d64545; width: 60px; }
+
+/* Индикатор «печатает» в шапке чата */
+.chat-head-main .typing { color: var(--accent, #4a9eff); font-style: italic; }

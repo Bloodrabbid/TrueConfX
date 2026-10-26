@@ -15,6 +15,16 @@ function plural(n: number, one: string, few: string, many: string) {
 
 const clock = (ts: number) => new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
 
+// «Иван печатает…» / «Иван, Пётр печатают…» / «Иван, Пётр и ещё 3 печатают…»
+function typingLabel(names: string[]): string {
+  if (!names.length) return ''
+  const verb = names.length === 1 ? 'печатает' : 'печатают'
+  const short = names.map(n => n.split(' ')[0])
+  if (short.length === 1) return `${short[0]} ${verb}…`
+  if (short.length === 2) return `${short[0]}, ${short[1]} ${verb}…`
+  return `${short[0]}, ${short[1]} и ещё ${short.length - 2} ${verb}…`
+}
+
 function chatTitle(c: ServerChat, nameOf: (id: string) => string, me?: string) {
   if (c.chatType === CHAT_TYPE.FAVORITES) return 'Избранное'
   if (c.chatType === CHAT_TYPE.MISSED_CALLS) return 'Пропущенные звонки'
@@ -262,7 +272,8 @@ function ForwardDialog() {
 }
 
 export function ChatView() {
-  const { chats, activeChatId, messages, account, nameOf, send, loadOlder, presence, replyTo, editing, set, draft, members, showMembers, loadMembers } = useStore()
+  const { chats, activeChatId, messages, account, nameOf, send, loadOlder, presence, replyTo, editing, set, draft, members, showMembers, loadMembers, typing, notifyTyping } = useStore()
+  const typers = (activeChatId ? typing[activeChatId] ?? [] : []).filter(t => t.activity === 0).map(t => nameOf(t.callId))
   const memberCount = activeChatId ? members[activeChatId]?.length ?? 0 : 0
   const chat = chats.find(c => c.chatId === activeChatId)
   const list = activeChatId ? messages[activeChatId] ?? [] : []
@@ -388,8 +399,8 @@ export function ChatView() {
         <Avatar name={title} id={peer ?? chat.chatId} size={36} />
         <div className="chat-head-main">
           <div className="title">{title}{level !== 'all' && <span className="muted" title={LEVEL_LABEL[level]}>{level === 'off' ? <BellOff size={13} /> : <AtSign size={13} />}</span>}</div>
-          {peer ? <div className="muted small">{PRESENCE_LABEL[presence[peer] ?? 'offline']}</div>
-            : <button className="muted small link-like" onClick={() => set({ showMembers: !showMembers, showFiles: false })}>{memberCount ? plural(memberCount, 'участник', 'участника', 'участников') : 'Групповой чат'}</button>}
+          {peer ? <div className="muted small">{typers.length ? <span className="typing">печатает…</span> : PRESENCE_LABEL[presence[peer] ?? 'offline']}</div>
+            : <button className="muted small link-like" onClick={() => set({ showMembers: !showMembers, showFiles: false })}>{typers.length ? <span className="typing">{typingLabel(typers)}</span> : memberCount ? plural(memberCount, 'участник', 'участника', 'участников') : 'Групповой чат'}</button>}
         </div>
         {chat.chatType === CHAT_TYPE.GROUP && <button className={`ghost ${showMembers ? 'on' : ''}`} title="Участники" onClick={() => set({ showMembers: !showMembers, showFiles: false })}><Users size={18} /></button>}
         <button className={`ghost ${search !== null ? 'on' : ''}`} title="Поиск по чату (⌘F)" onClick={() => { setSearch(search === null ? '' : null); setMentionsOnly(false) }}><Search size={18} /></button>
@@ -460,7 +471,7 @@ export function ChatView() {
         <textarea ref={input} rows={1}
           // Картинка или файл из буфера обмена — в окно отправки, текст — как обычно.
           onPaste={e => { if (e.clipboardData.files.length) { e.preventDefault(); addFiles(e.clipboardData.files) } }} placeholder="Сообщение · @ — упомянуть" value={text}
-          onChange={e => { setText(e.target.value); mention.trackCaret() }} onSelect={mention.trackCaret} onClick={mention.trackCaret}
+          onChange={e => { setText(e.target.value); mention.trackCaret(); if (activeChatId && e.target.value.trim()) notifyTyping(activeChatId) }} onSelect={mention.trackCaret} onClick={mention.trackCaret}
           onKeyDown={e => {
             if (mention.onKeyDown(e)) return
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
