@@ -829,9 +829,11 @@ function connectAndLogin (opts = {}) {
 let activeConnPromise = null
 let activeConnOpts = null
 
-// Меняют ли новые настройки то, с чем открыта сессия (сервер, логин, ключ, пароль).
+// Меняют ли новые настройки то, с чем открыта сессия (сервер, логин, пароль).
+// cid и key сюда НЕ входят: это данные сессии, сервер выдаёт key заново при каждом входе,
+// а веб-вход приносит свои cid/key. Из-за них каждый вызов рвал живую сессию (журнал SES 26.10.2026).
 // undefined в новых настройках — «не трогать», а не «сбросить».
-const NATIVE_OPT_KEYS = ['host', 'port', 'login', 'cid', 'key', 'password', 'forcePassword']
+const NATIVE_OPT_KEYS = ['host', 'port', 'login', 'password', 'forcePassword']
 function nativeOptsChanged (prev = {}, next = {}) {
   return NATIVE_OPT_KEYS.some(k => next[k] !== undefined && next[k] !== (prev || {})[k])
 }
