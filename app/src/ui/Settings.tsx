@@ -80,6 +80,7 @@ export function Settings() {
         <div className="meter"><div style={{ width: `${Math.min(100, level * 220)}%` }} /></div>
         {sel('audiooutput', 'audioOut', 'Динамики')}
         {sel('videoinput', 'videoIn', 'Камера')}
+        <CameraPreview deviceId={devices.videoIn} />
       </div>
       {upd && (
         <div className="card">
@@ -110,6 +111,34 @@ export function Settings() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Проверка камеры: превью по кнопке, ошибка getUserMedia — текстом.
+function CameraPreview({ deviceId }: { deviceId?: string }) {
+  const [on, setOn] = useState(false)
+  const [err, setErr] = useState('')
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    if (!on) return
+    let stream: MediaStream | undefined
+    let cancelled = false
+    setErr('')
+    ;(async () => {
+      await window.native?.ensureMediaAccess?.()
+      const s = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId } : true })
+      if (cancelled) { s.getTracks().forEach(t => t.stop()); return }
+      stream = s
+      if (ref.current) ref.current.srcObject = s
+    })().catch(e => setErr(`${e?.name ?? 'Ошибка'}: ${e?.message ?? e}`))
+    return () => { cancelled = true; stream?.getTracks().forEach(t => t.stop()) }
+  }, [on, deviceId])
+  return (
+    <div className="cam-check">
+      <button className="ghost" onClick={() => setOn(!on)}>{on ? 'Выключить превью' : 'Проверить камеру'}</button>
+      {on && !err && <video ref={ref} className="cam-preview mirror" autoPlay muted playsInline />}
+      {err && <div className="muted small">{err}</div>}
     </div>
   )
 }

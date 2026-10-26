@@ -1,5 +1,5 @@
 // Главный процесс: окно, обход CORS к серверу TrueConf, доступ к камере и экрану.
-const { app, BrowserWindow, session, desktopCapturer, shell, Notification, ipcMain, safeStorage, nativeImage } = require('electron')
+const { app, BrowserWindow, session, desktopCapturer, shell, Notification, ipcMain, safeStorage, nativeImage, systemPreferences, dialog } = require('electron')
 const fs = require('fs')
 const path = require('path')
 const { spawn } = require('child_process')
@@ -42,6 +42,36 @@ function installCorsBridge(ses) {
     const status = d.method === 'OPTIONS' ? 'HTTP/1.1 204 No Content' : d.statusLine
     cb({ responseHeaders: h, statusLine: status })
   })
+}
+
+// Доступ к камере и микрофону на macOS. Не спрашивали — системный запрос.
+// Отказано — предлагаем открыть настройки и сами перезапускаемся, когда доступ включат.
+const MEDIA_LABEL = { camera: 'камере', microphone: 'микрофону' }
+const MEDIA_PANE = { camera: 'Privacy_Camera', microphone: 'Privacy_Microphone' }
+let mediaWatch
+async function ensureMediaAccess () {
+  if (process.platform !== 'darwin') return { camera: true, microphone: true }
+  const res = {}
+  for (const kind of ['microphone', 'camera']) {
+    const st = systemPreferences.getMediaAccessStatus(kind)
+    if (st === 'granted') { res[kind] = true; continue }
+    if (st === 'not-determined') { res[kind] = await systemPreferences.askForMediaAccess(kind); continue }
+    res[kind] = false
+    if (mediaWatch) continue
+    const r = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: ['Открыть настройки', 'Позже'], defaultId: 0, cancelId: 1,
+      message: `Нет доступа к ${MEDIA_LABEL[kind]}`,
+      detail: 'Включите приложение в «Конфиденциальность и безопасность». Как только доступ появится, приложение перезапустится само.'
+    })
+    if (r.response !== 0) continue
+    shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${MEDIA_PANE[kind]}`)
+    mediaWatch = setInterval(() => {
+      if (['microphone', 'camera'].every(k => systemPreferences.getMediaAccessStatus(k) === 'granted')) {
+        clearInterval(mediaWatch); app.relaunch(); app.exit(0)
+      }
+    }, 1500)
+  }
+  return res
 }
 
 function createWindow() {
@@ -200,6 +230,7 @@ app.whenReady().then(() => {
     if (!conn) return { ok: false }
     return { ok: true, realm: conn.realm, sessionId: conn.sessionId, account: conn.account }
   })
+  ipcMain.handle('ensure-media-access', () => ensureMediaAccess())
   ipcMain.handle('native-status', async () => {
     const conn = await startBackgroundNativeSession()
     return conn ? { connected: conn.isAlive(), realm: conn.realm, sessionId: conn.sessionId, account: conn.account } : { connected: false }

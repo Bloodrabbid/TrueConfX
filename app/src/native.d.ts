@@ -41,6 +41,7 @@ declare global {
       nativeStatus?: () => Promise<{ connected: boolean; realm?: string; sessionId?: string; account?: any }>
       onNativeEvent?: (cb: (ev: { id: number; from: string; service: string; to: string; extra: string; data: any }) => void) => () => void
       call?: (kind: NativeCallKind, args: Record<string, any>) => Promise<{ ok: boolean; error?: string }>
+      ensureMediaAccess?: () => Promise<{ camera: boolean; microphone: boolean }>
       onCallEvent?: (cb: (ev: NativeCallEvent) => void) => () => void
       onCallIceServers?: (cb: (servers: RTCIceServer[]) => void) => () => void
       getUpdateState?: () => Promise<UpdateState>

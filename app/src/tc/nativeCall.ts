@@ -133,6 +133,7 @@ export class NativeCall {
   }
 
   private async openMedia(media: CallMedia) {
+    await window.native?.ensureMediaAccess?.()
     const constraints: MediaStreamConstraints = {
       audio: media.audio ? (media.audioDeviceId ? { deviceId: media.audioDeviceId } : true) : false,
       video: media.video ? (media.videoDeviceId ? { deviceId: media.videoDeviceId } : true) : false

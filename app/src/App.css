@@ -409,3 +409,7 @@ button.ghost.tiny { padding: 3px; }
 
 /* Индикатор «печатает» в шапке чата */
 .chat-head-main .typing { color: var(--accent, #4a9eff); font-style: italic; }
+
+/* Проверка камеры в настройках */
+.cam-check { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 4px; }
+.cam-preview { width: 320px; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; border-radius: 10px; }

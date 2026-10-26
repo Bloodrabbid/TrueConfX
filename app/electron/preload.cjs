@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('native', {
   onNativeEvent: cb => listen('native-event', cb),
   // Нативные звонки (:4307): исходящий сигналинг и входящие события/ICE-серверы.
   call: (kind, args) => ipcRenderer.invoke('native-call', kind, args),
+  ensureMediaAccess: () => ipcRenderer.invoke('ensure-media-access'),
   onCallEvent: cb => listen('call-event', cb),
   onCallIceServers: cb => listen('call-ice-servers', cb),
   getUpdateState: () => ipcRenderer.invoke('update-get'),
