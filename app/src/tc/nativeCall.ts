@@ -169,7 +169,13 @@ export class NativeCall {
         conference: this.conference, ...this.route()
       })
     }
+    const log = (ev: string, extra: Record<string, any> = {}) => window.native?.callLog?.({ ev, conn: pc.connectionState, ice: pc.iceConnectionState, sig: pc.signalingState, ...extra })
+    pc.oniceconnectionstatechange = () => { log('ice'); if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'failed') this.logPair(pc) }
+    pc.onicegatheringstatechange = () => log('gather', { gather: pc.iceGatheringState })
+    pc.onsignalingstatechange = () => log('sig')
+    pc.onicecandidateerror = (e: any) => log('cand-error', { code: e.errorCode, text: e.errorText, url: e.url })
     pc.onconnectionstatechange = () => {
+      log('conn')
       if (pc.connectionState === 'connected') this.setState('live')
       else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') this.cleanup('разрыв связи')
     }
@@ -186,27 +192,57 @@ export class NativeCall {
     await this.send('sdp', { sdp: offer.sdp, type: 0 /* WEBRTC_OFFER, LIVE-PENDING */, conference: this.conference, ...this.route() })
   }
 
+  // Какая пара кандидатов выбрана (типы и протокол, без адресов) — в журнал.
+  private async logPair(pc: RTCPeerConnection) {
+    try {
+      const st = await pc.getStats(); const by = new Map<string, any>(); st.forEach((r: any) => by.set(r.id, r))
+      st.forEach((r: any) => { if (r.type === 'candidate-pair' && (r.nominated || r.selected) && r.state === 'succeeded') {
+        const l = by.get(r.localCandidateId), rm = by.get(r.remoteCandidateId)
+        window.native?.callLog?.({ ev: 'pair', local: `${l?.candidateType}/${l?.protocol}`, remote: `${rm?.candidateType}/${rm?.protocol}` }) } })
+      let pairs = 0, failed = 0; st.forEach((r: any) => { if (r.type === 'candidate-pair') { pairs++; if (r.state === 'failed') failed++ } })
+      window.native?.callLog?.({ ev: 'pairs', pairs, failed })
+    } catch {}
+  }
+
   private async onRemoteSdp(ev: Extract<NativeCallEvent, { kind: 'sdp' }>) {
     this.remoteSdpSeen = true
+    window.native?.callLog?.({ ev: 'remote-sdp', type: ev.sdpType, sig: this.pc?.signalingState })
     if (!this.pc) { this.pendingRemote.push(ev); this.setupPc() }
     const pc = this.pc!
-    await pc.setRemoteDescription({ type: ev.sdpType, sdp: ev.sdp })
-    if (ev.sdpType === 'offer') {
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      await this.send('sdp', { sdp: answer.sdp, type: 1 /* WEBRTC_ANSWER */, conference: this.conference, ...this.route() })
+    try {
+      await pc.setRemoteDescription({ type: ev.sdpType, sdp: ev.sdp })
+      await this.flushCandidates()
+      if (ev.sdpType === 'offer') {
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        await this.send('sdp', { sdp: answer.sdp, type: 1 /* WEBRTC_ANSWER */, conference: this.conference, ...this.route() })
+      }
+    } catch (e: any) {
+      window.native?.callLog?.({ ev: 'sdp-error', type: ev.sdpType, sig: pc.signalingState, err: String(e?.message ?? e).slice(0, 300) })
     }
+  }
+
+  // Кандидаты, пришедшие раньше удалённого описания своей линии: применяем после setRemoteDescription.
+  // Раньше они выбрасывались (offer звонящего и его кандидаты приходят в одну секунду).
+  private lateCandidates: Extract<NativeCallEvent, { kind: 'candidate' }>[] = []
+  private async flushCandidates() {
+    const q = this.lateCandidates; this.lateCandidates = []
+    for (const c of q) await this.onRemoteCandidate(c)
   }
 
   private async onRemoteCandidate(ev: Extract<NativeCallEvent, { kind: 'candidate' }>) {
     if (!this.pc) { this.pendingRemote.push(ev); return }
-    try { await this.pc.addIceCandidate({ candidate: ev.candidate, sdpMid: ev.sdpMid, sdpMLineIndex: ev.mLineIndex }) } catch { /* кандидат до remote-описания */ }
+    try { await this.pc.addIceCandidate({ candidate: ev.candidate, sdpMid: ev.sdpMid, sdpMLineIndex: ev.mLineIndex }) } catch (e: any) {
+      // Линия ещё не известна (описание не применено) — отложить; иначе — в журнал.
+      if (this.lateCandidates.length < 50 && this.lateCandidates.indexOf(ev) < 0 && !this.pc.remoteDescription?.sdp.includes(`a=mid:${ev.sdpMid}\r`)) this.lateCandidates.push(ev)
+      else window.native?.callLog?.({ ev: 'cand-add-error', mid: ev.sdpMid, mline: ev.mLineIndex, err: String(e?.message ?? e).slice(0, 200) })
+    }
   }
 
   private cleanup(reason: string) {
     this.pc?.close(); this.pc = undefined
     this.local?.getTracks().forEach(t => t.stop()); this.local = undefined
-    this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''; this.remoteSdpSeen = false
+    this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''; this.remoteSdpSeen = false; this.lateCandidates = []
     if (this.conference) this.endedConference = this.conference
     if (this.state !== 'ended') this.setState('ended', reason)
   }

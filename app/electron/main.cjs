@@ -236,6 +236,8 @@ app.whenReady().then(() => {
     return { ok: true, realm: conn.realm, sessionId: conn.sessionId, account: conn.account }
   })
   ipcMain.handle('ensure-media-access', () => ensureMediaAccess())
+  // Диагностика звонка из renderer (состояния RTCPeerConnection, ошибки) — в тот же журнал.
+  ipcMain.on('call-log', (_e, data) => wireLog('PC', { service: 'PC', data }))
   ipcMain.handle('native-status', async () => {
     const conn = await startBackgroundNativeSession({}, { reuse: true })
     return conn ? { connected: conn.isAlive(), realm: conn.realm, sessionId: conn.sessionId, account: conn.account } : { connected: false }
