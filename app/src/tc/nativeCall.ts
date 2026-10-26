@@ -91,10 +91,11 @@ export class NativeCall {
     try { await this.openMedia(media) } catch (e: any) {
       try { await this.openMedia({ ...media, video: false }) } catch { this.mediaError = String(e?.message ?? e) }
     }
+    if (this.state === 'ended') { this.cleanup('ended'); return }
     this.setupPc()
     if (!this.remoteSdpSeen) await this.makeOffer()
     const rtc = await this.waitConnected(RTC_WAIT_MS)
-    if (this.state === 'ended') return
+    if ((this.state as NativeCallState) === 'ended') return
     const directConnect = rtc ? DIRECT_RTC : NO_DIRECT_CONNECT
     window.native?.callLog?.({ ev: 'accept', directConnect })
     const r = await this.send('accept', { conference: this.conference, caller: this.peer, me: this.self.callId, directConnect })
@@ -160,6 +161,8 @@ export class NativeCall {
         // Сервер шлёт Invite дважды (Hops 4 и 5 — два маршрута): повтор той же конференции пропускаем.
         if (ev.conference === this.conference && this.state !== 'idle' && this.state !== 'ended') break
         if (ev.conference === this.endedConference) break
+        // Новый звонок при незакрытом прежнем: сначала освобождаем камеру и соединение прежнего.
+        if (this.pc || this.local) this.cleanup('новый звонок')
         this.conference = ev.conference; this.peer = ev.caller
         this.setState('incoming')
         this.emit('incoming', { conference: ev.conference, caller: ev.caller, displayName: ev.displayName, audioOnly: ev.audioOnly })
@@ -172,6 +175,7 @@ export class NativeCall {
         break
       case 'reject': this.cleanup('отклонён'); break
       case 'hangup': this.cleanup('завершён'); break
+      case 'deleted': if (ev.conference === this.conference) this.cleanup(`конференция закрыта (${ev.cause})`); break
       case 'sdp': await this.onRemoteSdp(ev); break
       case 'candidate': await this.onRemoteCandidate(ev); break
     }
@@ -296,6 +300,8 @@ export class NativeCall {
   }
 
   private cleanup(reason: string) {
+    window.native?.callLog?.({ ev: 'cleanup', reason, tracks: this.local?.getTracks().length ?? 0 })
+    this.pc?.getSenders().forEach(s => s.track?.stop())
     this.pc?.close(); this.pc = undefined
     this.local?.getTracks().forEach(t => t.stop()); this.local = undefined
     this.offerSent = false; this.pendingRemote = []; this.peerInstance = ''; this.remoteSdpSeen = false; this.lateCandidates = []

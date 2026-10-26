@@ -217,6 +217,9 @@ function parseIncoming (m) {
         return { kind: 'reject', conference: str(d.Conference), peer: str(d.Name || d.UserName), cause: num(d.Cause) }
       case 'Hangup':
         return { kind: 'hangup', conference: str(d.Conference), peer: str(d.Name), result: num(d.Result) }
+      // Сервер закрыл конференцию (живой журнал 26.10.2026: Name = id конференции, Cause 17/21).
+      case 'ConferenceDeleted':
+        return { kind: 'deleted', conference: str(d.Name || d.Conference), cause: num(d.Cause) }
       case 'ConferenceCreated':
         return { kind: 'created', conference: str(d.Conference || d.id || d.Name) }
     }

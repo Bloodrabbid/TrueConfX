@@ -129,6 +129,12 @@ function wire ({ fields, opts }) {
 }
 
 // 6) Разбор входящих
+// ConferenceDeleted: Name = id конференции, Cause — причина (живой журнал 26.10.2026).
+{
+  const ev = vc.parseIncoming({ service: 'CONFERENCE', data: { Method: 'ConferenceDeleted', Name: 'c9@tc3.t2.ru#vcs', Cause: 21, Result: 1 } })
+  assert.deepStrictEqual(ev, { kind: 'deleted', conference: 'c9@tc3.t2.ru#vcs', cause: 21 }, 'ConferenceDeleted → deleted')
+}
+
 {
   const inv = vc.parseIncoming({ service: 'CONFERENCE', data: { Method: 'Invite', Conference: 'c1', Name: 'alice@tc.t2.ru' } })
   assert.deepStrictEqual({ kind: inv.kind, caller: inv.caller, conference: inv.conference }, { kind: 'invite', caller: 'alice@tc.t2.ru', conference: 'c1' })

@@ -7,6 +7,7 @@ export type NativeCallEvent =
   | { kind: 'reject'; conference: string; peer: string; cause: number }
   | { kind: 'hangup'; conference: string; peer: string; result: number }
   | { kind: 'created'; conference: string }
+  | { kind: 'deleted'; conference: string; cause: number }
   | { kind: 'sdp'; sdpType: 'offer' | 'answer'; sdp: string; conference: string; id: string }
   | { kind: 'candidate'; candidate: string; sdpMid: string; mLineIndex: number; conference: string; id: string }
 
