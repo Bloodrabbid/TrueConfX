@@ -87,6 +87,11 @@ export class NativeCall {
     this.cleanup('hangup')
   }
 
+  micMuted = false
+  camOff = false
+  setMicMuted(muted: boolean) { this.micMuted = muted; this.local?.getAudioTracks().forEach(t => { t.enabled = !muted }) }
+  setCamOff(off: boolean) { this.camOff = off; this.local?.getVideoTracks().forEach(t => { t.enabled = !off }) }
+
   dispose() { this.offItems.forEach(f => f()); this.offItems = []; this.cleanup('dispose') }
 
   // --- приём сигналинга ---

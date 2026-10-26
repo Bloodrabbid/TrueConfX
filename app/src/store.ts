@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import { TCClient, type ChatMember, CHAT_TYPE, messageText, sortByTime, isSystem, type Account, type Contact, type Presence, type ServerChat, type ServerMessage } from './tc/client'
 import { Conference } from './tc/conference'
+import { NativeCall, type NativeCallState, type CallMedia } from './tc/nativeCall'
 import { TCRest } from './tc/rest'
 import { plainText } from './ui/RichText'
 
@@ -36,6 +37,15 @@ interface State {
   presence: Record<string, Presence>
   names: Record<string, string>
   conference?: Conference
+  // Нативный P2P-звонок (:4307), отдельно от веб-конференций.
+  nativeCall?: NativeCall
+  callState: NativeCallState
+  incomingCall?: { conference: string; caller: string; audioOnly: boolean }
+  ensureNativeCall: () => NativeCall | undefined
+  startNativeCall: (peer: string, media?: Partial<CallMedia>) => Promise<void>
+  answerCall: (media?: Partial<CallMedia>) => Promise<void>
+  rejectCall: () => void
+  endCall: () => void
   theme: 'dark' | 'light'
   devices: { audioIn?: string; videoIn?: string; audioOut?: string }
   joinAudio: boolean
@@ -141,6 +151,7 @@ export const useStore = create<State>((set, get) => ({
   devices: saved.devices ?? {},
   joinAudio: saved.joinAudio ?? true,
   joinVideo: saved.joinVideo ?? false,
+  callState: 'idle',
 
   set: p => {
     set(p)
@@ -184,6 +195,7 @@ export const useStore = create<State>((set, get) => ({
       if (remember) await window.native?.saveCredentials?.(server, login, password)
       window.native?.nativeConnect?.({ server: host, login: account.trueconfId, cid: account.cid, key: account.key, password })
       set({ client, account, connecting: false })
+      setTimeout(() => get().ensureNativeCall(), 1500) // дать нативной сессии подняться
       // REST нужен для созвонов; без него чаты работают, поэтому ошибку не показываем.
       const rest = new TCRest(host)
       rest.login(login, password).then(() => set({ rest }), e => console.warn('OAuth', e))
@@ -205,9 +217,10 @@ export const useStore = create<State>((set, get) => ({
   logout: () => {
     reconnecting = false
     get().conference?.hangup()
+    get().nativeCall?.dispose()
     get().client?.logout()
     window.native?.saveCredentials?.('', '', '')
-    set({ client: undefined, rest: undefined, dialog: undefined, account: undefined, chats: [], messages: {}, contacts: [], activeChatId: undefined, conference: undefined })
+    set({ client: undefined, rest: undefined, dialog: undefined, account: undefined, chats: [], messages: {}, contacts: [], activeChatId: undefined, conference: undefined, nativeCall: undefined, callState: 'idle', incomingCall: undefined })
   },
 
   openChat: async chatId => {
@@ -312,6 +325,35 @@ export const useStore = create<State>((set, get) => ({
     }).catch(() => {})
     return undefined
   },
+
+  // Создать единый экземпляр нативного звонка (ловит входящие + ведёт UI).
+  ensureNativeCall: () => {
+    const s = get()
+    if (s.nativeCall) return s.nativeCall
+    const acc = s.account
+    if (!acc || !window.native?.call) return undefined
+    const call = new NativeCall({ callId: acc.trueconfId.split('/')[0], instance: acc.instance, displayName: acc.displayName, appId: acc.instance })
+    call.on('state', (st, reason) => {
+      set({ callState: st })
+      if (st === 'ended') { set({ incomingCall: undefined }); if (reason && reason !== 'hangup') get().notify(reason) }
+    })
+    call.on('incoming', info => { set({ incomingCall: info }); get().resolveNames([info.caller]); window.native?.attention?.() })
+    set({ nativeCall: call })
+    return call
+  },
+  startNativeCall: async (peer, media) => {
+    const call = get().ensureNativeCall()
+    if (!call) { get().notify('Нативная сессия недоступна'); return }
+    await call.start(peer, { audio: true, video: get().joinVideo, ...media })
+  },
+  answerCall: async media => {
+    const call = get().nativeCall
+    if (!call) return
+    set({ incomingCall: undefined })
+    await call.answer({ audio: true, video: get().joinVideo, ...media })
+  },
+  rejectCall: () => { get().nativeCall?.reject(); set({ incomingCall: undefined }) },
+  endCall: () => { get().nativeCall?.hangup() },
 
   join: async (confId, password) => {
     const { client, joinAudio, joinVideo, devices } = get()

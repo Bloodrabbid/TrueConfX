@@ -11,6 +11,7 @@ import { Avatar } from './ui/common'
 import { Dialogs } from './ui/Dialogs'
 import { MembersPanel } from './ui/Members'
 import { FilesPanel } from './ui/Files'
+import { CallScreen } from './ui/Call'
 import './App.css'
 
 function ScreenPicker() {
@@ -108,6 +109,7 @@ export default function App() {
       )}
       <ScreenPicker />
       <Dialogs />
+      <CallScreen />
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
