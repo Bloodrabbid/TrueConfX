@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Mic, MicOff, Video, VideoOff, MonitorUp, MonitorX, Hand, PhoneOff, Users, MessageSquare, Maximize, PictureInPicture2, Link2, Copy, Circle, Smile, Plus, Volume2, VolumeX } from 'lucide-react'
-import { useStore, parseConfLink, addSent, callChatOf, peerOf } from '../store'
+import { useStore, addSent, callChatOf, peerOf } from '../store'
+import { parseConfLink } from '../tc/guest'
 import { toHtml } from './Mentions'
 import { Conference, REACTION, ROLE, micOn, camOn, type Layout, type Participant } from '../tc/conference'
 import type { NetStats } from '../tc/media'

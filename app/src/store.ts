@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import { TCClient, type ChatMember, CHAT_TYPE, messageText, sortByTime, isSystem, type Account, type Contact, type Presence, type ServerChat, type ServerMessage } from './tc/client'
 import { Conference } from './tc/conference'
+import { isCrossServer, confServerHost, confNumber, openGuestClient, parseConfLink } from './tc/guest'
 import { NativeCall, type NativeCallState, type CallMedia } from './tc/nativeCall'
 import { TCRest } from './tc/rest'
 import { plainText } from './ui/RichText'
@@ -373,16 +374,32 @@ export const useStore = create<State>((set, get) => ({
   join: async (confId, password) => {
     const { client, joinAudio, joinVideo, devices } = get()
     if (!client || get().conference) return
-    const conf = new Conference(client, confId.trim(), password)
+    confId = confId.trim()
+    // Конференция на другом сервере, чем аккаунт (напр. 2811027@tc2.t2.ru при аккаунте на tc.t2.ru):
+    // домашняя сессия даёт ошибку 1104. Входим на сервер конференции отдельным гостевым клиентом.
+    let confClient = client
+    let guestClient: TCClient | undefined
+    if (isCrossServer(confId, client.host)) {
+      try {
+        guestClient = await openGuestClient(confServerHost(confId, client.host), confId, get().account?.displayName ?? '')
+        confClient = guestClient
+      } catch (e: any) {
+        get().notify(e.message)
+        return
+      }
+    }
+    // Серверу входа нужен голый номер конференции (как шлёт веб-клиент), без '@host'.
+    const conf = new Conference(confClient, confNumber(confId), password)
     set({ conference: conf, tab: 'meet' })
     conf.on('state', (s, reason) => {
-      if (s === 'ended') { set({ conference: undefined }); if (reason) get().notify(reason) }
+      if (s === 'ended') { set({ conference: undefined }); guestClient?.sock.close(); if (reason) get().notify(reason) }
       else set({ conference: conf })
     })
     try {
       await conf.join({ audio: joinAudio, video: joinVideo, audioDeviceId: devices.audioIn, videoDeviceId: devices.videoIn })
     } catch (e: any) {
       set({ conference: undefined })
+      guestClient?.sock.close()
       get().notify(e.message)
     }
   },
@@ -695,12 +712,6 @@ async function reconnect() {
       delay = Math.min(delay * 2, 30000)
     }
   }
-}
-
-// trueconf:\c\<id>&h=host ; https://host/c/<id> ; голый id
-export function parseConfLink(link: string): string | undefined {
-  const s = decodeURIComponent(link)
-  return s.match(/\\c\\([^&\s/]+)/)?.[1] ?? s.match(/\/c\/([^/?#\s]+)/)?.[1] ?? s.match(/\/webrtc\/([^/?#\s]+)/)?.[1] ?? (/^[\w-]+$/.test(s.trim()) ? s.trim() : undefined)
 }
 
 function handleLink(link: string) {
