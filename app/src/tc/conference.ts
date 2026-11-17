@@ -96,6 +96,10 @@ export class Conference {
       'conferenceStateChange', f => f.conference?.message === 'joinResponse' || f.conference?.message === 'deleteConference', 20000)
     const c = res.conference
     if (c.message !== 'joinResponse' || c.lastRejectReason !== 6) {
+      // Полный ответ сервера на вход в конфу — чтобы прочитать причину неизвестных кодов (напр. 1104)
+      // в ~/Library/Logs/TrueConfX/native-wire.jsonl (service PC). Пароль не логируем.
+      const { Password, password, ...frame } = (c ?? {}) as Record<string, any>
+      window.native?.callLog?.({ ev: 'conf-reject', code: c.lastRejectReason, message: c.message, frame })
       const reason = REJECT[c.lastRejectReason] ?? `Сервер отказал во входе (код ${c.lastRejectReason})`
       this.setState('ended', reason)
       this.dispose()
